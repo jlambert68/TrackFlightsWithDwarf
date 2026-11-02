@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -57,11 +61,52 @@ func main() {
 			stop()
 		}
 	}()
+	if sdrURL, callback := os.Getenv("TRACKFLIGHTS_SDR_URL"), os.Getenv("TRACKFLIGHTS_CALLBACK_URL"); sdrURL != "" && callback != "" {
+		go subscribeSDR(ctx, server, sdrURL, callback, logger)
+	} else if sdrURL != "" || callback != "" {
+		logger.Error("both TRACKFLIGHTS_SDR_URL and TRACKFLIGHTS_CALLBACK_URL are required")
+	}
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	manager.CancelAll()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
+	}
+}
+
+// subscribeSDR retries after loss of the receiver's callback heartbeat.
+func subscribeSDR(ctx context.Context, server *api.Server, base, callback string, logger *slog.Logger) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	defer client.CloseIdleConnections()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	var lastAttempt time.Time
+	for {
+		if time.Since(server.SDRLastContact()) > 15*time.Second && time.Since(lastAttempt) > 10*time.Second {
+			lastAttempt = time.Now()
+			body, _ := json.Marshal(map[string]string{"url": strings.TrimRight(callback, "/") + "/api/v1/sdr/frames"})
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(base, "/")+"/api/v1/subscription", bytes.NewReader(body))
+			if err == nil {
+				req.Header.Set("Content-Type", "application/json")
+				resp, e := client.Do(req)
+				err = e
+				if e == nil {
+					io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+					if resp.StatusCode/100 != 2 {
+						logger.Warn("SDR subscription rejected", "status", resp.Status)
+					}
+				}
+			}
+			if err != nil && ctx.Err() == nil {
+				logger.Warn("SDR subscription failed", "error", err)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }

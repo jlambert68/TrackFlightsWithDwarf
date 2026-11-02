@@ -39,11 +39,19 @@ type Aircraft struct {
 	LastSeen          time.Time `json:"lastSeen"`
 }
 
+type TrackPoint struct {
+	Latitude     float64   `json:"latitude"`
+	Longitude    float64   `json:"longitude"`
+	AltitudeFeet *int      `json:"altitudeFeet,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
+}
+
 type LiveState struct {
-	Receiver      Receiver   `json:"receiver"`
-	Aircraft      []Aircraft `json:"aircraft"`
-	LiveAvailable bool       `json:"liveAvailable"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
+	Trails        map[string][]TrackPoint `json:"trails"`
+	Receiver      Receiver                `json:"receiver"`
+	Aircraft      []Aircraft              `json:"aircraft"`
+	LiveAvailable bool                    `json:"liveAvailable"`
+	UpdatedAt     time.Time               `json:"updatedAt"`
 }
 
 // Service owns mutable receiver state. A receiver process or a fixture reader
@@ -51,6 +59,7 @@ type LiveState struct {
 type Service struct {
 	mu            sync.RWMutex
 	flights       map[string]adsb.Message
+	trails        map[string][]TrackPoint
 	cpr           map[string][2]*cprValue
 	receiver      Receiver
 	liveAvailable bool
@@ -64,7 +73,7 @@ func NewService(receiver ...Receiver) *Service {
 	if len(receiver) > 0 {
 		r = receiver[0]
 	}
-	return &Service{flights: make(map[string]adsb.Message), cpr: make(map[string][2]*cprValue), receiver: r, expiry: aircraftExpiry, updates: make(chan struct{}, 1)}
+	return &Service{flights: make(map[string]adsb.Message), trails: make(map[string][]TrackPoint), cpr: make(map[string][2]*cprValue), receiver: r, expiry: aircraftExpiry, updates: make(chan struct{}, 1)}
 }
 
 func (s *Service) SetAircraftExpiry(expiry time.Duration) {
@@ -83,15 +92,21 @@ func (s *Service) SetReceiver(receiver Receiver) {
 }
 
 func (s *Service) ConsumeLine(line string) (adsb.Message, error) {
+	return s.ConsumeLineAt(line, time.Now().UTC())
+}
+
+// ConsumeLineAt preserves the original reception time during history recovery.
+func (s *Service) ConsumeLineAt(line string, received time.Time) (adsb.Message, error) {
 	message, err := adsb.DecodeLine(line)
 	if err != nil {
 		return adsb.Message{}, err
 	}
-	message.LastSeen = time.Now().UTC()
+	message.LastSeen = received.UTC()
 	s.mu.Lock()
 	previous := s.flights[message.ICAO]
 	if !previous.LastSeen.IsZero() && message.LastSeen.Sub(previous.LastSeen) > s.expiry {
 		delete(s.cpr, message.ICAO)
+		delete(s.trails, message.ICAO)
 		previous = adsb.Message{}
 	}
 	if message.HasCPR {
@@ -129,6 +144,14 @@ func (s *Service) ConsumeLine(line string) (adsb.Message, error) {
 	if message.Latitude == nil {
 		message.Latitude, message.Longitude = previous.Latitude, previous.Longitude
 		message.PositionTime, message.PositionReference = previous.PositionTime, previous.PositionReference
+	}
+	if message.Latitude != nil && message.Longitude != nil && !message.PositionTime.IsZero() && !message.PositionTime.Equal(previous.PositionTime) {
+		points := s.trails[message.ICAO]
+		points = append(points, TrackPoint{Latitude: *message.Latitude, Longitude: *message.Longitude, AltitudeFeet: message.AltitudeFeet, Timestamp: message.PositionTime})
+		if len(points) > 10000 {
+			points = append([]TrackPoint(nil), points[len(points)-10000:]...)
+		}
+		s.trails[message.ICAO] = points
 	}
 	s.flights[message.ICAO] = message
 	s.liveAvailable, s.updated = true, message.LastSeen
@@ -186,7 +209,13 @@ func (s *Service) Snapshot() []adsb.Message {
 func (s *Service) LiveState() LiveState {
 	items := s.Snapshot()
 	s.mu.RLock()
-	state := LiveState{Receiver: s.receiver, LiveAvailable: s.liveAvailable, UpdatedAt: s.updated, Aircraft: make([]Aircraft, 0, len(items))}
+	state := LiveState{Trails: make(map[string][]TrackPoint), Receiver: s.receiver, LiveAvailable: s.liveAvailable, UpdatedAt: s.updated, Aircraft: make([]Aircraft, 0, len(items))}
+	for _, message := range items {
+		points := s.trails[message.ICAO]
+		if len(points) > 0 {
+			state.Trails[message.ICAO] = append([]TrackPoint(nil), points...)
+		}
+	}
 	s.mu.RUnlock()
 	for _, message := range items {
 		state.Aircraft = append(state.Aircraft, aircraftFromMessage(message))
@@ -208,6 +237,7 @@ func (s *Service) expireLocked(now time.Time) {
 		if item.LastSeen.IsZero() || now.Sub(item.LastSeen) > s.expiry {
 			delete(s.flights, icao)
 			delete(s.cpr, icao)
+			delete(s.trails, icao)
 		}
 	}
 }

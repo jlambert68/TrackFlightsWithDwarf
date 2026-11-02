@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import * as Cesium from 'cesium'
-import 'cesium/Build/Cesium/Widgets/widgets.css'
+import 'cesium/Build/Cesium/Widgets/CesiumWidget/CesiumWidget.css'
 import { splitAtGaps, unresolvedSignalSegments } from '../trackHistory'
 import { captureMotion, historyDiverges, projectPosition, type Motion } from '../flightProjection'
 import { cameraViewChanged, readDefaultCamera, saveDefaultCamera, type CameraView } from '../cameraView'
@@ -41,7 +41,7 @@ const aircraftColor = Cesium.Color.fromCssColorString('#49d7ff')
 
 export function FlightGlobe({ aircraft, receiver, selected, onSelect, onDistances, trails, externalTrail, externalTrails, title, tileURL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', terrainURL = 'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer', showAirports = true, liveAlerts = false }: Props) {
   const host = useRef<HTMLDivElement>(null)
-  const viewer = useRef<Cesium.Viewer | null>(null)
+  const viewer = useRef<Cesium.CesiumWidget | null>(null)
   const entities = useRef(new Map<string, Cesium.Entity>())
   const receiverEntity = useRef<Cesium.Entity | null>(null)
   const localTrails = useRef(new Map<string, Point[]>())
@@ -64,10 +64,8 @@ export function FlightGlobe({ aircraft, receiver, selected, onSelect, onDistance
 
   useEffect(() => {
     if (!host.current) return
-    const next = new Cesium.Viewer(host.current, {
-      animation: false, timeline: false, baseLayerPicker: false, geocoder: false,
-      homeButton: false, sceneModePicker: false, navigationHelpButton: false,
-      selectionIndicator: false, infoBox: false, baseLayer: false,
+    const next = new Cesium.CesiumWidget(host.current, {
+      baseLayer: false,
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
     })
     next.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0a1b2a')
@@ -314,7 +312,7 @@ export function FlightGlobe({ aircraft, receiver, selected, onSelect, onDistance
 }
 
 type SightConfig = { enabled: boolean; rangeMeters: number; heightMeters: number; beams: {horizontal: number; vertical: number}[] }
-function applyCameraView(viewer: Cesium.Viewer, view: CameraView) {
+function applyCameraView(viewer: Cesium.CesiumWidget, view: CameraView) {
   viewer.camera.setView({destination: new Cesium.Cartesian3(view.x, view.y, view.z), orientation: {heading: view.heading, pitch: view.pitch, roll: view.roll}})
 }
 function defaultSight(): SightConfig { return {enabled: true, rangeMeters: 30000, heightMeters: 18, beams: [{horizontal:240,vertical:0},{horizontal:300,vertical:0},{horizontal:300,vertical:45},{horizontal:240,vertical:45}]} }
@@ -334,7 +332,7 @@ function inSight(item: GlobeAircraft, receiver: Point, sight: SightConfig) {
 }
 function playBell(context: AudioContext | null) { if (!context || context.state !== 'running') return; const oscillator = context.createOscillator(), gain = context.createGain(), now = context.currentTime; oscillator.frequency.value = 784; gain.gain.setValueAtTime(.1, now); gain.gain.exponentialRampToValueAtTime(.001, now + .5); oscillator.connect(gain).connect(context.destination); oscillator.start(now); oscillator.stop(now + .5) }
 
-function addAirports(viewer: Cesium.Viewer) {
+function addAirports(viewer: Cesium.CesiumWidget) {
   for (const airport of [{ id: 'essa', name: 'Stockholm Arlanda · ESSA', latitude: 59.651944, longitude: 17.918611 }, { id: 'essb', name: 'Stockholm Bromma · ESSB', latitude: 59.354444, longitude: 17.942222 }]) {
     if (viewer.entities.getById(`airport-${airport.id}`)) continue
     viewer.entities.add({ id: `airport-${airport.id}`, position: Cesium.Cartesian3.fromDegrees(airport.longitude, airport.latitude, 1500), point: { pixelSize: 8, color: Cesium.Color.fromCssColorString('#c084fc'), outlineColor: Cesium.Color.WHITE, outlineWidth: 1 }, label: { text: airport.name, font: '12px sans-serif', fillColor: Cesium.Color.fromCssColorString('#e9d5ff'), outlineColor: Cesium.Color.fromCssColorString('#25113d'), outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(8, -6) } })

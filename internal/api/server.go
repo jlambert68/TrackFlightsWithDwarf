@@ -27,6 +27,9 @@ import (
 var assets embed.FS
 
 type Server struct {
+	sdrMu          sync.Mutex
+	sdrLastContact time.Time
+	sdrLastFrame   time.Time
 	logger         *slog.Logger
 	config         config.Config
 	configMu       sync.RWMutex
@@ -64,6 +67,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/flights/live", s.liveFlights)
 	mux.HandleFunc("GET /api/v1/flights/stream", s.flightStream)
 	mux.HandleFunc("POST /api/v1/flights/frames", s.ingestFlightFrame)
+	mux.HandleFunc("POST /api/v1/sdr/frames", s.ingestSDR)
 	mux.HandleFunc("GET /api/v1/flights/recordings", s.recordings)
 	mux.HandleFunc("GET /api/v1/flights/history", s.flightHistory)
 	mux.HandleFunc("GET /api/v1/flights/history/stream", s.flightHistoryStream)
