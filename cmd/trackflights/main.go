@@ -54,6 +54,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go server.RunNostr(ctx, logger)
 	go func() {
 		logger.Info("TrackFlights server started", "address", cfg.Server.ListenAddress, "dataRoot", dataRoot)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

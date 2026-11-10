@@ -33,13 +33,14 @@ type Props = {
   title: string
   tileURL?: string
   terrainURL?: string
+  terrainHeightMultiplier?: number
   showAirports?: boolean
   liveAlerts?: boolean
 }
 
 const aircraftColor = Cesium.Color.fromCssColorString('#49d7ff')
 
-export function FlightGlobe({ aircraft, receiver, selected, onSelect, onDistances, trails, externalTrail, externalTrails, title, tileURL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', terrainURL = 'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer', showAirports = true, liveAlerts = false }: Props) {
+export function FlightGlobe({ aircraft, receiver, selected, onSelect, onDistances, trails, externalTrail, externalTrails, title, tileURL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', terrainURL = 'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer', terrainHeightMultiplier = 1, showAirports = true, liveAlerts = false }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const viewer = useRef<Cesium.CesiumWidget | null>(null)
   const entities = useRef(new Map<string, Cesium.Entity>())
@@ -104,6 +105,13 @@ export function FlightGlobe({ aircraft, receiver, selected, onSelect, onDistance
     observer.observe(host.current)
     return () => { observer.disconnect(); cancelAnimationFrame(resizeFrame); next.camera.changed.removeEventListener(updateCamera); next.destroy(); viewer.current = null; entities.current.clear(); receiverEntity.current = null; externalEntities.current.clear(); hasFocused.current = false }
   }, [onSelect, terrainURL, tileURL])
+
+  useEffect(() => {
+    const scene = viewer.current?.scene
+    if (!scene) return
+    scene.verticalExaggeration = terrainHeightMultiplier
+    scene.requestRender()
+  }, [terrainHeightMultiplier, tileURL, terrainURL])
 
   useEffect(() => {
     const update = () => setDefaultCamera(readDefaultCamera())

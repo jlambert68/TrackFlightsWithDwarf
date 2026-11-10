@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:trackflights:sdr-signals:2",
+  "title": "TrackFlights SDR signals version 2",
+  "description": "ADS-B frames and the latest aircraft data decoded at each reception. Optional data may have been retained from earlier frames.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "version", "signals"],
+  "properties": {
+    "type": {"const": "trackflights.sdr.signals"},
+    "version": {"const": 2},
+    "signals": {
+      "type": "array", "minItems": 1, "maxItems": 25,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["frame", "received", "aircraft"],
+        "properties": {
+          "frame": {"type": "string", "pattern": "^[0-9A-F]{28}$"},
+          "received": {"type": "string", "format": "date-time"},
+          "aircraft": {
+            "type": "object", "additionalProperties": false,
+            "required": ["icao"],
+            "properties": {
+              "icao": {"type": "string", "pattern": "^[0-9A-F]{6}$"},
+              "callsign": {"type": "string"},
+              "altitudeFeet": {"type": "integer"},
+              "speedKnots": {"type": "number", "minimum": 0},
+              "headingDeg": {"type": "number", "minimum": 0, "maximum": 360},
+              "verticalFPM": {"type": "integer"},
+              "position": {
+                "type": "object", "additionalProperties": false,
+                "required": ["latitude", "longitude", "timestamp", "reference"],
+                "properties": {
+                  "latitude": {"type": "number", "minimum": -90, "maximum": 90},
+                  "longitude": {"type": "number", "minimum": -180, "maximum": 180},
+                  "timestamp": {"type": "string", "format": "date-time"},
+                  "reference": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

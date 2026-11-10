@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jlambert/trackflights/internal/flight/adsb"
+	"github.com/jlambert/trackflights/internal/sdr/nostrpub"
 )
 
 type Frame struct {
@@ -24,11 +25,14 @@ type Frame struct {
 	Received time.Time `json:"received"`
 }
 type Service struct {
-	mu     sync.Mutex
-	frames []Frame
-	next   uint64
-	cancel context.CancelFunc
-	client *http.Client
+	mu         sync.Mutex
+	frames     []Frame
+	next       uint64
+	cancel     context.CancelFunc
+	client     *http.Client
+	running    bool
+	lastSignal time.Time
+	onSignal   func(string, time.Time)
 }
 
 func New() *Service { return &Service{client: &http.Client{Timeout: 5 * time.Second}} }
@@ -41,17 +45,29 @@ func (s *Service) prune(now time.Time) {
 		s.frames = append([]Frame(nil), s.frames[n:]...)
 	}
 }
+func (s *Service) SetSignalHandler(handler func(string, time.Time)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onSignal = handler
+}
 func (s *Service) Add(line string) {
-	if _, err := adsb.DecodeLine(line); err != nil {
+	message, err := adsb.DecodeLine(line)
+	if err != nil {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	now := time.Now().UTC()
 	s.prune(now)
 	s.next++
+	s.lastSignal = now
 	s.frames = append(s.frames, Frame{s.next, line, now})
+	handler := s.onSignal
+	s.mu.Unlock()
+	if handler != nil {
+		handler(message.Raw, now)
+	}
 }
+
 func (s *Service) History(after uint64) []Frame {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,8 +80,28 @@ func (s *Service) History(after uint64) []Frame {
 	}
 	return out
 }
+
+// SignalStatus describes valid ADS-B frames received in the last 30 seconds.
+func (s *Service) SignalStatus() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.running {
+		return "receiver_unavailable"
+	}
+	if s.lastSignal.IsZero() || time.Since(s.lastSignal) > 30*time.Second {
+		return "no_signal"
+	}
+	return "receiving"
+}
+
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/schemas/flight-signals", nostrpub.SchemasHandler)
+	mux.HandleFunc("GET /api/v1/schemas/flight-signals/{version}", nostrpub.SchemaHandler)
+	mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"signal": s.SignalStatus()})
+	})
 	mux.HandleFunc("GET /api/v1/history", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(s.History(0))
@@ -114,6 +150,7 @@ func (s *Service) deliver(ctx context.Context, target string) {
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-SDR-Signal", s.SignalStatus())
 		resp, err := s.client.Do(req)
 		if err != nil {
 			return
@@ -158,6 +195,11 @@ func (s *Service) RunReceiver(ctx context.Context, device, gain, ppm string) err
 	if err = cmd.Start(); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	s.running = true
+	s.lastSignal = time.Time{}
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); s.running = false; s.mu.Unlock() }()
 	readErr := s.Read(ctx, stdout)
 	waitErr := cmd.Wait()
 	return errors.Join(readErr, waitErr)

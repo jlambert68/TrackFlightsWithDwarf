@@ -74,3 +74,65 @@ func TestAircraftExpiryDefaultsValidatesAndPersists(t *testing.T) {
 		}
 	}
 }
+
+func TestTerrainHeightMultiplierDefaultsAndValidation(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "settings.json"))
+	cfg := Default()
+	cfg.Flight.TerrainHeightMultiplier = nil
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Flight.TerrainHeightMultiplier == nil || *loaded.Flight.TerrainHeightMultiplier != 1 {
+		t.Fatalf("legacy default: %v", loaded.Flight.TerrainHeightMultiplier)
+	}
+	multiplier := 3.5
+	loaded.Flight.TerrainHeightMultiplier = &multiplier
+	if err := store.Save(loaded); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *loaded.Flight.TerrainHeightMultiplier != 3.5 {
+		t.Fatalf("saved multiplier: %v", loaded.Flight.TerrainHeightMultiplier)
+	}
+	for _, multiplier := range []float64{-1, 0, 0.09, 20.1} {
+		loaded.Flight.TerrainHeightMultiplier = &multiplier
+		if err := store.Save(loaded); err == nil {
+			t.Fatalf("accepted multiplier %v", multiplier)
+		}
+	}
+}
+
+func TestNostrRelayConfiguration(t *testing.T) {
+	cfg := Default()
+	if cfg.Flight.NostrEnabled == nil || !*cfg.Flight.NostrEnabled || cfg.Flight.NostrRelayURL != "ws://127.0.0.1:7447" {
+		t.Fatal("incorrect default relay settings")
+	}
+	for _, url := range []string{"http://example.com", "ws://user:password@example.com", "ws://example.com/?token=secret", ""} {
+		cfg.Flight.NostrRelayURL = url
+		if cfg.Validate() == nil {
+			t.Fatalf("accepted invalid relay URL %q", url)
+		}
+	}
+	cfg.Flight.NostrRelayURL = "wss://relay.example.com"
+	cfg.Flight.NostrPublisher = "invalid"
+	if cfg.Validate() == nil {
+		t.Fatal("accepted invalid public key")
+	}
+	cfg.Flight.NostrPublisher = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	disabled := false
+	cfg.Flight.NostrEnabled = &disabled
+	cfg.Flight.NostrRelayURL = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

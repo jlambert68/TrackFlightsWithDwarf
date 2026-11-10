@@ -27,7 +27,10 @@ import (
 var assets embed.FS
 
 type Server struct {
+	tracking       trackingState
 	sdrMu          sync.Mutex
+	nostrStatus    string
+	sdrSignal      string
 	sdrLastContact time.Time
 	sdrLastFrame   time.Time
 	logger         *slog.Logger
@@ -77,6 +80,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/flights/photo", s.flightPhoto)
 	mux.HandleFunc("GET /api/v1/flights/metadata", s.flightMetadata)
 	mux.HandleFunc("POST /api/v1/flights/sight-bell", s.sightBell)
+	mux.HandleFunc("GET /api/v1/tracking", s.trackingStatus)
+	mux.HandleFunc("GET /api/v1/tracking/inputs", s.trackingInputs)
+	mux.HandleFunc("POST /api/v1/tracking/inputs", s.trackingUpload)
+	mux.HandleFunc("POST /api/v1/tracking/start", s.trackingStart)
+	mux.HandleFunc("GET /api/v1/tracking/preview", s.trackingPreview)
+	mux.HandleFunc("GET /api/v1/tracking/events", s.trackingEvents)
+	mux.HandleFunc("GET /api/v1/tracking/events/{id}/files", s.trackingEventFiles)
+	mux.HandleFunc("GET /api/v1/tracking/events/{id}/files/{path...}", s.trackingEventFile)
 	mux.HandleFunc("GET /api/v1/events", s.emptyEvents)
 	mux.HandleFunc("GET /api/v1/dwarf/downloads", s.emptyDownloads)
 	mux.HandleFunc("GET /", s.static)
@@ -117,6 +128,17 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&cfg); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
+	}
+	// Preserve Nostr settings when an older client sends a configuration without them.
+	if cfg.Flight.NostrEnabled == nil {
+		current := s.currentConfig().Flight
+		cfg.Flight.NostrEnabled = current.NostrEnabled
+		if cfg.Flight.NostrRelayURL == "" {
+			cfg.Flight.NostrRelayURL = current.NostrRelayURL
+		}
+		if cfg.Flight.NostrPublisher == "" {
+			cfg.Flight.NostrPublisher = current.NostrPublisher
+		}
 	}
 	if err := s.store.Save(cfg); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -187,7 +209,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) liveFlights(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.flights.LiveState())
+	writeJSON(w, http.StatusOK, s.liveState())
 }
 func (s *Server) flightStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -199,7 +221,7 @@ func (s *Server) flightStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write := func() {
-		payload, _ := json.Marshal(map[string]any{"type": "flight.snapshot", "timestamp": time.Now().UTC(), "payload": s.flights.LiveState()})
+		payload, _ := json.Marshal(map[string]any{"type": "flight.snapshot", "timestamp": time.Now().UTC(), "payload": s.liveState()})
 		_, _ = w.Write([]byte("event: flight.snapshot\ndata: " + string(payload) + "\n\n"))
 		f.Flush()
 	}

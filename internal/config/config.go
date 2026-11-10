@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -28,20 +29,24 @@ type ServerConfig struct {
 }
 
 type FlightConfig struct {
-	Device                 string  `json:"device"`
-	Gain                   string  `json:"gain"`
-	PPM                    int     `json:"ppm"`
-	Latitude               float64 `json:"latitude"`
-	Longitude              float64 `json:"longitude"`
-	TrackingDir            string  `json:"trackingDir"`
-	HomeName               string  `json:"homeName"`
-	TileURL                string  `json:"tileUrl"`
-	TerrainURL             string  `json:"terrainUrl"`
-	ShowAirports           bool    `json:"showAirports"`
-	HostBellEnabled        bool    `json:"hostBellEnabled"`
-	HistoryLookbackMinutes *int    `json:"historyLookbackMinutes"`
-	HistoryBaseURL         string  `json:"historyBaseUrl"`
-	AircraftExpirySeconds  *int    `json:"aircraftExpirySeconds"`
+	NostrEnabled            *bool    `json:"nostrEnabled"`
+	NostrRelayURL           string   `json:"nostrRelayUrl"`
+	NostrPublisher          string   `json:"nostrPublisher"`
+	Device                  string   `json:"device"`
+	Gain                    string   `json:"gain"`
+	PPM                     int      `json:"ppm"`
+	Latitude                float64  `json:"latitude"`
+	Longitude               float64  `json:"longitude"`
+	TrackingDir             string   `json:"trackingDir"`
+	HomeName                string   `json:"homeName"`
+	TileURL                 string   `json:"tileUrl"`
+	TerrainURL              string   `json:"terrainUrl"`
+	TerrainHeightMultiplier *float64 `json:"terrainHeightMultiplier"`
+	ShowAirports            bool     `json:"showAirports"`
+	HostBellEnabled         bool     `json:"hostBellEnabled"`
+	HistoryLookbackMinutes  *int     `json:"historyLookbackMinutes"`
+	HistoryBaseURL          string   `json:"historyBaseUrl"`
+	AircraftExpirySeconds   *int     `json:"aircraftExpirySeconds"`
 }
 
 func (c FlightConfig) AircraftExpiry() time.Duration {
@@ -64,7 +69,7 @@ func Default() Config {
 	return Config{
 		Version:  CurrentVersion,
 		Server:   ServerConfig{ListenAddress: "127.0.0.1:8080", AccessMode: "loopback"},
-		Flight:   FlightConfig{Device: "0", Gain: "auto", TrackingDir: "flights", HomeName: "Tottkällevägen 4A, Värmdö", Latitude: 59.323316, Longitude: 18.480349, TileURL: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", TerrainURL: "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer", ShowAirports: true, HistoryLookbackMinutes: intPointer(5), HistoryBaseURL: "https://adsb.lol", AircraftExpirySeconds: intPointer(300)},
+		Flight:   FlightConfig{NostrEnabled: boolPointer(true), NostrRelayURL: "ws://127.0.0.1:7447", Device: "0", Gain: "auto", TrackingDir: "flights", HomeName: "Tottkällevägen 4A, Värmdö", Latitude: 59.323316, Longitude: 18.480349, TileURL: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", TerrainURL: "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer", ShowAirports: true, TerrainHeightMultiplier: floatPointer(1), HistoryLookbackMinutes: intPointer(5), HistoryBaseURL: "https://adsb.lol", AircraftExpirySeconds: intPointer(300)},
 		Dwarf:    DwarfConfig{Host: "192.168.88.1", Camera: "tele"},
 		Tracking: TrackingConfig{OutputDir: "events"},
 	}
@@ -86,11 +91,28 @@ func (c Config) Validate() error {
 	if c.Flight.Latitude < -90 || c.Flight.Latitude > 90 || c.Flight.Longitude < -180 || c.Flight.Longitude > 180 {
 		return errors.New("flight receiver coordinates are invalid")
 	}
+	if c.Flight.TerrainHeightMultiplier != nil && (math.IsNaN(*c.Flight.TerrainHeightMultiplier) || math.IsInf(*c.Flight.TerrainHeightMultiplier, 0) || *c.Flight.TerrainHeightMultiplier < 0.1 || *c.Flight.TerrainHeightMultiplier > 20) {
+		return errors.New("terrain height multiplier must be between 0.1 and 20")
+	}
 	if c.Flight.HistoryLookbackMinutes != nil && (*c.Flight.HistoryLookbackMinutes < 0 || *c.Flight.HistoryLookbackMinutes > 1440) {
 		return errors.New("flight history lookback must be between 0 and 1440 minutes")
 	}
 	if c.Flight.AircraftExpirySeconds != nil && (*c.Flight.AircraftExpirySeconds < 1 || *c.Flight.AircraftExpirySeconds > 86400) {
 		return errors.New("aircraft visibility after the last signal must be between 1 and 86400 seconds")
+	}
+	if c.Flight.NostrRelayURL != "" {
+		u, err := url.Parse(c.Flight.NostrRelayURL)
+		if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("invalid Nostr relay URL")
+		}
+	}
+	if c.Flight.NostrEnabled != nil && *c.Flight.NostrEnabled && c.Flight.NostrRelayURL == "" {
+		return errors.New("Nostr relay URL is required when enabled")
+	}
+	if c.Flight.NostrPublisher != "" {
+		if len(c.Flight.NostrPublisher) != 64 || strings.Trim(c.Flight.NostrPublisher, "0123456789abcdef") != "" {
+			return errors.New("Nostr publisher must be a lowercase 64-character public key")
+		}
 	}
 	if c.Flight.HistoryBaseURL != "" {
 		parsed, err := url.Parse(c.Flight.HistoryBaseURL)
@@ -132,6 +154,12 @@ func (s *Store) Load() (Config, error) {
 
 func applyDefaults(cfg *Config) {
 	defaults := Default().Flight
+	if cfg.Flight.NostrEnabled == nil {
+		cfg.Flight.NostrEnabled = boolPointer(true)
+		if cfg.Flight.NostrRelayURL == "" {
+			cfg.Flight.NostrRelayURL = defaults.NostrRelayURL
+		}
+	}
 	legacyMapConfig := cfg.Flight.HomeName == ""
 	if legacyMapConfig {
 		cfg.Flight.HomeName = defaults.HomeName
@@ -147,6 +175,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Flight.TerrainURL == "" {
 		cfg.Flight.TerrainURL = defaults.TerrainURL
 	}
+	if cfg.Flight.TerrainHeightMultiplier == nil {
+		cfg.Flight.TerrainHeightMultiplier = floatPointer(1)
+	}
 	if cfg.Flight.HistoryLookbackMinutes == nil {
 		cfg.Flight.HistoryLookbackMinutes = intPointer(5)
 	}
@@ -160,6 +191,10 @@ func applyDefaults(cfg *Config) {
 		cfg.Flight.ShowAirports = defaults.ShowAirports
 	}
 }
+
+func boolPointer(value bool) *bool { return &value }
+
+func floatPointer(value float64) *float64 { return &value }
 
 func intPointer(value int) *int { return &value }
 

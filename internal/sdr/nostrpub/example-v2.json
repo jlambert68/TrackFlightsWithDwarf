@@ -1,0 +1,55 @@
+{
+  "type": "trackflights.sdr.signals",
+  "version": 2,
+  "signals": [
+    {
+      "frame": "8D40621D202CC371C32CE02E065C",
+      "received": "2026-11-04T11:59:58Z",
+      "aircraft": {
+        "icao": "40621D",
+        "callsign": "KLM1023"
+      }
+    },
+    {
+      "frame": "8D40621D994409940838174550B1",
+      "received": "2026-11-04T11:59:59Z",
+      "aircraft": {
+        "icao": "40621D",
+        "callsign": "KLM1023",
+        "speedKnots": 159.20113064925135,
+        "headingDeg": 182.88037755284762,
+        "verticalFPM": -832
+      }
+    },
+    {
+      "frame": "8D40621D58C382D690C8AC2863A7",
+      "received": "2026-11-04T12:00:00Z",
+      "aircraft": {
+        "icao": "40621D",
+        "callsign": "KLM1023",
+        "altitudeFeet": 38000,
+        "speedKnots": 159.20113064925135,
+        "headingDeg": 182.88037755284762,
+        "verticalFPM": -832
+      }
+    },
+    {
+      "frame": "8D40621D58C386435CC412692AD6",
+      "received": "2026-11-04T12:00:01Z",
+      "aircraft": {
+        "icao": "40621D",
+        "callsign": "KLM1023",
+        "altitudeFeet": 38000,
+        "speedKnots": 159.20113064925135,
+        "headingDeg": 182.88037755284762,
+        "verticalFPM": -832,
+        "position": {
+          "latitude": 52.26578017412606,
+          "longitude": 3.938912527901786,
+          "timestamp": "2026-11-04T12:00:01Z",
+          "reference": "odd"
+        }
+      }
+    }
+  ]
+}

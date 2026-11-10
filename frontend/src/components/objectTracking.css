@@ -1,0 +1,24 @@
+.tracking-workspace { display: grid; gap: 1rem; }
+.tracking-controls { display: flex; flex-wrap: wrap; gap: .8rem; align-items: end; padding: 1rem; background: #0b1a2b; border: 1px solid #25415d; border-radius: .7rem; }
+.tracking-controls label { display: grid; gap: .3rem; color: #9bb4ca; font-size: .82rem; }
+.tracking-controls input, .tracking-controls select { max-width: 26rem; color: #e9f4ff; background: #10243a; border: 1px solid #31526e; border-radius: .35rem; padding: .5rem; }
+.tracking-controls .tracking-checkbox { display: flex; align-items: center; flex-direction: row; padding: .5rem; }
+.tracking-controls button, .tracking-info button { background: #15324a; color: #e9f4ff; }
+.tracking-layout { display: grid; grid-template-columns: minmax(0, 1fr) 240px; min-height: 360px; border: 1px solid #25415d; border-radius: .7rem; overflow: hidden; }
+.tracking-preview { background: #030914; display: grid; place-items: center; min-width: 0; }
+.tracking-preview img { width: 100%; height: auto; display: block; }
+.tracking-info, .tracking-results { padding: 1rem; background: #0b1a2b; color: #b9d0e1; }
+.tracking-info progress { width: 100%; }
+.tracking-results { border: 1px solid #25415d; border-radius: .7rem; }
+.tracking-event-list { display: flex; flex-wrap: wrap; gap: .3rem; }
+.tracking-event-list button.selected { background: #15324a; color: #fff; }
+.tracking-results pre { overflow: auto; max-height: 18rem; }
+.tracking-results a { color: #80cfff; }
+.tracking-crop { max-width: 240px; max-height: 180px; object-fit: contain; }
+@media (max-width: 760px) { .tracking-layout { grid-template-columns: 1fr; } }
+
+.tracking-tuning { padding: .8rem 1rem; background: #0b1a2b; border: 1px solid #25415d; border-radius: .7rem; color: #b9d0e1; }
+.tracking-tuning summary { cursor: pointer; }
+.tracking-tuning > div { display: flex; flex-wrap: wrap; gap: .8rem; margin: .8rem 0; }
+.tracking-tuning label { display: grid; gap: .3rem; font-size: .82rem; }
+.tracking-tuning input { width: 11rem; color: #e9f4ff; background: #10243a; border: 1px solid #31526e; border-radius: .35rem; padding: .5rem; }

@@ -95,8 +95,19 @@ func (s *Service) ConsumeLine(line string) (adsb.Message, error) {
 	return s.ConsumeLineAt(line, time.Now().UTC())
 }
 
+type RemotePosition struct {
+	Latitude, Longitude float64
+	Timestamp           time.Time
+	Reference           string
+}
+
 // ConsumeLineAt preserves the original reception time during history recovery.
 func (s *Service) ConsumeLineAt(line string, received time.Time) (adsb.Message, error) {
+	return s.ConsumeLineWithPosition(line, received, nil)
+}
+
+// ConsumeLineWithPosition also accepts a validated decoded position from the receiver.
+func (s *Service) ConsumeLineWithPosition(line string, received time.Time, remote *RemotePosition) (adsb.Message, error) {
 	message, err := adsb.DecodeLine(line)
 	if err != nil {
 		return adsb.Message{}, err
@@ -104,6 +115,10 @@ func (s *Service) ConsumeLineAt(line string, received time.Time) (adsb.Message, 
 	message.LastSeen = received.UTC()
 	s.mu.Lock()
 	previous := s.flights[message.ICAO]
+	if !previous.LastSeen.IsZero() && !message.LastSeen.After(previous.LastSeen) {
+		s.mu.Unlock()
+		return previous, nil
+	}
 	if !previous.LastSeen.IsZero() && message.LastSeen.Sub(previous.LastSeen) > s.expiry {
 		delete(s.cpr, message.ICAO)
 		delete(s.trails, message.ICAO)
@@ -117,14 +132,21 @@ func (s *Service) ConsumeLineAt(line string, received time.Time) (adsb.Message, 
 			reference = cprDecodeReference{latitude: s.receiver.Latitude, longitude: s.receiver.Longitude, source: "receiver"}
 		}
 		updateCPR(&message, s.cpr, message.LastSeen, reference)
-		if message.Latitude != nil && previous.Latitude != nil && previous.Longitude != nil && !previous.PositionTime.IsZero() {
-			distance := distanceMeters(*previous.Latitude, *previous.Longitude, *message.Latitude, *message.Longitude)
-			elapsed := message.PositionTime.Sub(previous.PositionTime).Seconds()
-			if elapsed <= 0 || distance > 100000 || (distance > 250 && distance/elapsed*1.9438444924406 > 1500) {
-				message.Latitude, message.Longitude = nil, nil
-				message.PositionTime = time.Time{}
-				message.PositionReference = ""
-			}
+	}
+	if remote != nil && remote.Latitude >= -90 && remote.Latitude <= 90 && remote.Longitude >= -180 && remote.Longitude <= 180 && !remote.Timestamp.IsZero() && !remote.Timestamp.After(received) && remote.Timestamp.After(previous.PositionTime) && remote.Reference != "" {
+		lat, lon := remote.Latitude, remote.Longitude
+		message.Latitude = &lat
+		message.Longitude = &lon
+		message.PositionTime = remote.Timestamp
+		message.PositionReference = remote.Reference
+	}
+	if message.Latitude != nil && previous.Latitude != nil && previous.Longitude != nil && !previous.PositionTime.IsZero() {
+		distance := distanceMeters(*previous.Latitude, *previous.Longitude, *message.Latitude, *message.Longitude)
+		elapsed := message.PositionTime.Sub(previous.PositionTime).Seconds()
+		if elapsed <= 0 || distance > 100000 || (distance > 250 && distance/elapsed*1.9438444924406 > 1500) {
+			message.Latitude, message.Longitude = nil, nil
+			message.PositionTime = time.Time{}
+			message.PositionReference = ""
 		}
 	}
 	message.Frames = previous.Frames + 1

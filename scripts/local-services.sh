@@ -50,6 +50,6 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-"$BIN_DIR/sdr" -listen "$SDR_LISTEN" -device "$SDR_DEVICE" -gain "$SDR_GAIN" -ppm "$SDR_PPM" 9>&- & sdr_pid=$!
+"$BIN_DIR/sdr" -listen "$SDR_LISTEN" -device "$SDR_DEVICE" -gain "$SDR_GAIN" -ppm "$SDR_PPM" -nostr-relay "$NOSTR_RELAY" -nostr-key-file "$NOSTR_KEY_FILE" 9>&- & sdr_pid=$!
 TRACKFLIGHTS_DATA_ROOT="$DATA_ROOT" TRACKFLIGHTS_SDR_URL="$SDR_URL" TRACKFLIGHTS_CALLBACK_URL="$CALLBACK_URL" "$BIN_DIR/trackflights" 9>&- & app_pid=$!
 wait -n "$sdr_pid" "$app_pid"
