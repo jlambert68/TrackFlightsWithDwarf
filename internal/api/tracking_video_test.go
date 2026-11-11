@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,6 +57,107 @@ func TestTrackingAVIPlaybackAndDownload(t *testing.T) {
 	s.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/event-one/files/tracked.avi", nil))
 	if res.Code != http.StatusOK || string(res.Body.Bytes()) != string(before) {
 		t.Fatal("original AVI was changed or cannot be downloaded")
+	}
+}
+
+func TestRecoverEventOriginalFromMatchingSession(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	s := newTestServer(t)
+	if err := os.MkdirAll(s.trackingRoot(), 0750); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(s.trackingRoot(), "recording.mp4")
+	cmd := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=s=64x64:r=10,geq=lum='N*20+16':cb=128:cr=128", "-frames:v", "10", "-c:v", "mpeg4", input)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create source: %v: %s", err, out)
+	}
+	eventDir := filepath.Join(s.trackingEventsRoot(), "event-one")
+	sessionDir := filepath.Join(s.trackingEventsRoot(), "session-one")
+	for _, dir := range []string{eventDir, sessionDir} {
+		if err := os.MkdirAll(dir, 0750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, data string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(data), 0640); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(sessionDir, "event.json"), `{"type":"tracking_session","source":"recording.mp4","frames":10}`)
+	write(filepath.Join(sessionDir, "tracking.json"), `{"fps":10,"frames":[{"source_frame":1,"time_unix_ns":1700000000000000000}]}`)
+	write(filepath.Join(eventDir, "event.json"), `{"frames":4}`)
+	write(filepath.Join(eventDir, "tracking.json"), `{"fps":10,"frames":[{"source_frame":4,"time_unix_ns":1700000000300000000},{"source_frame":5,"time_unix_ns":1700000000400000000},{"source_frame":6,"time_unix_ns":1700000000500000000},{"source_frame":7,"time_unix_ns":1700000000600000000}]}`)
+	list := httptest.NewRecorder()
+	s.Handler().ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/event-one/files", nil))
+	if !strings.Contains(list.Body.String(), `"originalAvailable":true`) {
+		t.Fatalf("source not recovered: %s", list.Body.String())
+	}
+	res := httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/event-one/original-video", nil))
+	if res.Code != 200 {
+		t.Fatalf("original: %d %s", res.Code, res.Body.String())
+	}
+	clip := filepath.Join(t.TempDir(), "clip.mp4")
+	if err := os.WriteFile(clip, res.Body.Bytes(), 0640); err != nil {
+		t.Fatal(err)
+	}
+	probe := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", clip)
+	if out, err := probe.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "4" {
+		t.Fatalf("wrong clip frame count: %s %v", out, err)
+	}
+	frame := func(path string, index int) []byte {
+		t.Helper()
+		out, err := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error", "-i", path, "-vf", fmt.Sprintf(`select=eq(n\,%d)`, index), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	want, got := frame(input, 3), frame(clip, 0)
+	if len(want) == 0 || len(want) != len(got) {
+		t.Fatal("could not decode frames")
+	}
+	var difference int
+	for i := range want {
+		delta := int(want[i]) - int(got[i])
+		if delta < 0 {
+			delta = -delta
+		}
+		difference += delta
+	}
+	if difference/len(want) > 8 {
+		t.Fatalf("clip starts at the wrong frame: average difference %d", difference/len(want))
+	}
+	eventTracking := filepath.Join(eventDir, "tracking.json")
+	validTracking, err := os.ReadFile(eventTracking)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(eventTracking, `{"fps":10,"frames":[{"source_frame":4,"time_unix_ns":1700000000300000000},{"source_frame":6,"time_unix_ns":1700000000500000000}]}`)
+	res = httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/event-one/original-video", nil))
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("noncontiguous frames were accepted: %d", res.Code)
+	}
+	if err := os.WriteFile(eventTracking, validTracking, 0640); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := filepath.Join(s.trackingEventsRoot(), "session-two")
+	if err := os.MkdirAll(duplicate, 0750); err != nil {
+		t.Fatal(err)
+	}
+	write(filepath.Join(duplicate, "event.json"), `{"type":"tracking_session","source":"recording.mp4","frames":10}`)
+	write(filepath.Join(duplicate, "tracking.json"), `{"fps":10,"frames":[{"source_frame":1,"time_unix_ns":1700000000000000000}]}`)
+	res = httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/event-one/original-video", nil))
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("ambiguous session was guessed: %d", res.Code)
 	}
 }
 

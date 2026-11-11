@@ -7,6 +7,7 @@ import { useReplayTracks } from './useReplayTracks'
 import type { TrackPoint } from './trackHistory'
 import { ObjectTracking } from './components/ObjectTracking'
 import { TrackingEvents } from './components/TrackingEvents'
+import { NostrMonitor } from './components/NostrMonitor'
 
 type Status = { accessMode: string; services: Record<string, string> }
 type Aircraft = { icao: string; callsign?: string; altitudeFeet?: number; speedKnots?: number; headingDeg?: number; latitude?: number; longitude?: number; positionTimestamp?: string; positionReady: boolean; frames: number; lastSeen: string }
@@ -15,7 +16,7 @@ type ReplayAircraft = { icao: string; callsign?: string; registration?: string; 
 type Replay = { date: string; startMilliseconds: number; endMilliseconds: number; windowStartMilliseconds: number; windowEndMilliseconds: number; aircraftExpirySeconds: number; events: { milliseconds: number; aircraft: ReplayAircraft }[]; skippedLines: number }
 type AppConfig = { version: number; flight: { nostrEnabled?: boolean; nostrRelayUrl?: string; nostrPublisher?: string; homeName?: string; latitude?: number; longitude?: number; tileUrl?: string; terrainUrl?: string; terrainHeightMultiplier?: number; showAirports?: boolean; historyLookbackMinutes?: number; historyBaseUrl?: string; aircraftExpirySeconds?: number; [key: string]: unknown }; [key: string]: unknown }
 const FlightGlobe = lazy(() => import('./components/FlightGlobe').then(module => ({default: module.FlightGlobe})))
-const sections = ['Overview', 'Flight map', 'Flight replay', 'DWARF camera', 'Object tracking', 'Events', 'Library', 'Publishing', 'Settings', 'Diagnostics']
+const sections = ['Overview', 'Flight map', 'Flight replay', 'DWARF camera', 'Object tracking', 'Events', 'Nostr', 'Library', 'Publishing', 'Settings', 'Diagnostics']
 
 function AircraftVisibilityControl({config}: {config: AppConfig | null}) {
   const [seconds, setSeconds] = useState('')
@@ -164,7 +165,7 @@ function App() {
   const [status, setStatus] = useState<Status | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => { fetch('/api/v1/status').then(r => r.ok ? r.json() : Promise.reject(new Error(String(r.status)))).then(setStatus).catch(e => setError(e.message)) }, [])
-  return <div className="shell"><aside><strong>◉ TrackFlights</strong><nav>{sections.map(section => <button className={active === section ? 'active' : ''} onClick={() => { setActive(section); if (section === 'Flight replay') setReplayVisited(true) }} key={section}>{section}</button>)}</nav><small>{status ? `${status.accessMode} · ${status.services.tracking}` : 'Checking system…'}</small></aside><main><p className="eyebrow">OBSERVATORY CONSOLE</p><h1>{active}</h1>{error ? <p className="error">Unable to load system status: {error}</p> : active === 'Overview' ? <div className="cards">{Object.entries(status?.services ?? {}).map(([name, state]) => <article key={name}><h2>{name}</h2><p>{state}</p></article>)}</div> : active === 'Flight map' ? <FlightMapView/> : active === 'Object tracking' ? <ObjectTracking/> : active === 'Events' ? <TrackingEvents/> : active === 'Flight replay' ? null : <section className="workspace">This workspace is ready for the {active.toLowerCase()} service migration.</section>}{replayVisited && <div hidden={active !== 'Flight replay'}><ReplayView active={active === 'Flight replay'}/></div>}</main></div>
+  return <div className="shell"><aside><strong>◉ TrackFlights</strong><nav>{sections.map(section => <button className={active === section ? 'active' : ''} onClick={() => { setActive(section); if (section === 'Flight replay') setReplayVisited(true) }} key={section}>{section}</button>)}</nav><small>{status ? `${status.accessMode} · ${status.services.tracking}` : 'Checking system…'}</small></aside><main><p className="eyebrow">OBSERVATORY CONSOLE</p><h1>{active}</h1>{error ? <p className="error">Unable to load system status: {error}</p> : active === 'Overview' ? <div className="cards">{Object.entries(status?.services ?? {}).map(([name, state]) => <article key={name}><h2>{name}</h2><p>{state}</p></article>)}</div> : active === 'Flight map' ? <FlightMapView/> : active === 'Object tracking' ? <ObjectTracking/> : active === 'Events' ? <TrackingEvents/> : active === 'Nostr' ? <NostrMonitor/> : active === 'Flight replay' ? null : <section className="workspace">This workspace is ready for the {active.toLowerCase()} service migration.</section>}{replayVisited && <div hidden={active !== 'Flight replay'}><ReplayView active={active === 'Flight replay'}/></div>}</main></div>
 }
 function useState<T>(value: T) { return React.useState<T>(value) }
 function useEffect(effect: React.EffectCallback, dependencies: React.DependencyList) { return React.useEffect(effect, dependencies) }

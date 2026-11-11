@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/nostr-dwarf-note.schema.json",
+  "title": "Nostr DWARF media note",
+  "description": "Strict NIP-01 kind 1 event with NIP-92 imeta tags for JPEG or GIF images served from a Blossom-style content-addressed URL.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "pubkey", "created_at", "kind", "tags", "content", "sig"],
+  "properties": {
+    "id": { "$ref": "#/$defs/sha256" },
+    "pubkey": { "$ref": "#/$defs/hex32" },
+    "created_at": { "type": "integer", "minimum": 0 },
+    "kind": { "const": 1 },
+    "tags": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/imetaTag" }
+    },
+    "content": { "type": "string" },
+    "sig": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{128}$",
+      "description": "64-byte lowercase hexadecimal Schnorr signature. Cryptographic validity is not checked by JSON Schema."
+    }
+  },
+  "$defs": {
+    "hex32": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "imetaTag": {
+      "type": "array",
+      "minItems": 3,
+      "prefixItems": [{ "const": "imeta" }],
+      "items": { "$ref": "#/$defs/imetaEntry" },
+      "allOf": [
+        {
+          "contains": { "$ref": "#/$defs/urlEntry" },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "$ref": "#/$defs/nonUrlEntry" },
+          "minContains": 1
+        },
+        {
+          "contains": { "$ref": "#/$defs/mimeEntry" },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": { "$ref": "#/$defs/hashEntry" },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ],
+      "description": "NIP-92 requires exactly one URL and at least one other field. This project additionally requires MIME type and file SHA-256."
+    },
+    "imetaEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/urlEntry" },
+        { "$ref": "#/$defs/mimeEntry" },
+        { "$ref": "#/$defs/hashEntry" },
+        { "$ref": "#/$defs/originalHashEntry" },
+        { "$ref": "#/$defs/sizeEntry" },
+        { "$ref": "#/$defs/dimEntry" },
+        { "$ref": "#/$defs/thumbEntry" },
+        { "$ref": "#/$defs/altEntry" },
+        { "$ref": "#/$defs/blurhashEntry" },
+        { "$ref": "#/$defs/fallbackEntry" }
+      ]
+    },
+    "nonUrlEntry": {
+      "not": { "$ref": "#/$defs/urlEntry" }
+    },
+    "urlEntry": {
+      "type": "string",
+      "pattern": "^url https?://[^\\s]+/[0-9a-f]{64}\\.(?:jpe?g|gif)$"
+    },
+    "mimeEntry": {
+      "type": "string",
+      "enum": ["m image/jpeg", "m image/gif"]
+    },
+    "hashEntry": {
+      "type": "string",
+      "pattern": "^x [0-9a-f]{64}$"
+    },
+    "originalHashEntry": {
+      "type": "string",
+      "pattern": "^ox [0-9a-f]{64}$"
+    },
+    "sizeEntry": {
+      "type": "string",
+      "pattern": "^size (?:0|[1-9][0-9]*)$"
+    },
+    "dimEntry": {
+      "type": "string",
+      "pattern": "^dim [1-9][0-9]*x[1-9][0-9]*$"
+    },
+    "thumbEntry": {
+      "type": "string",
+      "pattern": "^thumb https?://[^\\s]+/[0-9a-f]{64}\\.(?:webp|jpe?g|png)$"
+    },
+    "altEntry": {
+      "type": "string",
+      "pattern": "^alt .+$"
+    },
+    "blurhashEntry": {
+      "type": "string",
+      "pattern": "^blurhash \\S+$"
+    },
+    "fallbackEntry": {
+      "type": "string",
+      "pattern": "^fallback https?://\\S+$"
+    }
+  },
+  "$comment": "Application checks still required: recompute id from [0,pubkey,created_at,kind,tags,content]; verify sig; ensure every imeta URL occurs in content; enforce at most one imeta per URL; verify URL filename hash equals x and SHA-256 of downloaded bytes; verify size/dim/MIME; optionally verify ox against the original file."
+}

@@ -9,7 +9,6 @@ export function TrackingEvents() {
   const [selectedID, setSelectedID] = useState('')
   const [files, setFiles] = useState<string[]>([])
   const [originalAvailable, setOriginalAvailable] = useState(false)
-  const [videoView, setVideoView] = useState<'tracked' | 'original'>('tracked')
   const [error, setError] = useState('')
   const [filesError, setFilesError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -36,7 +35,6 @@ export function TrackingEvents() {
   useEffect(() => {
     setFiles([])
     setOriginalAvailable(false)
-    setVideoView('tracked')
     setFilesError('')
     if (!selectedID) return
     const controller = new AbortController()
@@ -49,14 +47,13 @@ export function TrackingEvents() {
   const fileURL = (path: string) => `/api/v1/tracking/events/${encodeURIComponent(selectedID)}/files/${path.split('/').map(encodeURIComponent).join('/')}`
   const crop = files.find(file => /\.(jpg|png)$/i.test(file))
   const video = files.find(file => file === 'tracked.mp4') ?? files.find(file => file === 'tracked.avi')
-  const showOriginal = originalAvailable && (videoView === 'original' || !video)
-  const needsConversion = showOriginal || video === 'tracked.avi'
-  const playbackURL = showOriginal ? `/api/v1/tracking/events/${encodeURIComponent(selectedID)}/original-video` : video ? needsConversion ? `/api/v1/tracking/events/${encodeURIComponent(selectedID)}/video` : fileURL(video) : undefined
+  const trackedURL = video === 'tracked.avi' ? `/api/v1/tracking/events/${encodeURIComponent(selectedID)}/video` : video ? fileURL(video) : undefined
+  const originalURL = originalAvailable ? `/api/v1/tracking/events/${encodeURIComponent(selectedID)}/original-video` : undefined
   return <section className="tracking-results">
     <h2>Recorded events</h2>
     <button onClick={() => void refresh()}>Refresh events</button>
     {error && <p className="error" role="alert">{error}</p>}
     {loading ? <p className="muted">Loading events…</p> : events.length === 0 ? <p className="muted">No recorded events yet. Start a tracking session to record events.</p> : <div className="tracking-event-list">{events.map(event => <button key={event.id} className={selectedID === event.id ? 'selected' : ''} onClick={() => setSelectedID(event.id)}>{event.id}</button>)}</div>}
-    {selected && <section><h3>{selected.id}</h3>{video && <p><a href={fileURL(video)} download={video}>Download tracked video ({video === 'tracked.avi' ? 'AVI' : 'MP4'})</a></p>}{originalAvailable && video && <label>Video <select value={showOriginal ? 'original' : 'tracked'} onChange={e => setVideoView(e.target.value as 'tracked' | 'original')}><option value="tracked">Tracked video — all objects</option><option value="original">Original video — selected object only</option></select></label>}{crop && <img className="tracking-crop" src={fileURL(crop)} alt="Tracked object crop"/>}<TrackedObjects eventID={selectedID} files={files} fileURL={fileURL} videoURL={playbackURL} needsConversion={needsConversion}/><details><summary>Event details</summary><pre>{JSON.stringify(selected.summary, null, 2)}</pre></details><h4>Files</h4>{filesError && <p className="error" role="alert">{filesError}</p>}<ul>{files.slice(0, 100).map(file => <li key={file}><a href={fileURL(file)} target="_blank" rel="noreferrer">{file}</a></li>)}</ul>{files.length > 100 && <p className="muted">Showing the first 100 files.</p>}</section>}
+    {selected && <section><h3>{selected.id}</h3>{video && <p><a href={fileURL(video)} download={video}>Download tracked video ({video === 'tracked.avi' ? 'AVI' : 'MP4'})</a></p>}{crop && <img className="tracking-crop" src={fileURL(crop)} alt="Tracked object crop"/>}<TrackedObjects eventID={selectedID} files={files} fileURL={fileURL} trackedURL={trackedURL} originalURL={originalURL} trackedNeedsConversion={video === 'tracked.avi'}/><details><summary>Event details</summary><pre>{JSON.stringify(selected.summary, null, 2)}</pre></details><h4>Files</h4>{filesError && <p className="error" role="alert">{filesError}</p>}<ul>{files.slice(0, 100).map(file => <li key={file}><a href={fileURL(file)} target="_blank" rel="noreferrer">{file}</a></li>)}</ul>{files.length > 100 && <p className="muted">Showing the first 100 files.</p>}</section>}
   </section>
 }

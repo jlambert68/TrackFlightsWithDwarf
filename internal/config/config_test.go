@@ -136,3 +136,108 @@ func TestNostrRelayConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTrackingNostrDefaultsAndValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Tracking = TrackingConfig{OutputDir: "events"}
+	applyDefaults(&cfg)
+	if cfg.Tracking.NostrEnabled == nil || !*cfg.Tracking.NostrEnabled || cfg.Tracking.NostrAutoStart == nil || !*cfg.Tracking.NostrAutoStart || cfg.Tracking.NostrRelayURL != "ws://127.0.0.1:7448" || cfg.Tracking.NostrKeyFile != "tracking/nostr.key" {
+		t.Fatalf("bad legacy defaults: %+v", cfg.Tracking)
+	}
+	for _, address := range []string{"", "http://localhost:7448", "ws://user:password@localhost:7448", "ws://localhost:7448/?key=secret"} {
+		cfg.Tracking.NostrRelayURL = address
+		if cfg.Validate() == nil {
+			t.Fatalf("accepted invalid tracking relay %q", address)
+		}
+	}
+	cfg.Tracking.NostrRelayURL = "ws://localhost:7448"
+	cfg.Tracking.NostrKeyFile = ""
+	if cfg.Validate() == nil {
+		t.Fatal("accepted missing key path")
+	}
+	cfg.Tracking.NostrEnabled = boolPointer(false)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("disabled publication should not need a key: %v", err)
+	}
+}
+
+func TestBlossomURLDefaultsAndValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Tracking.BlossomURL = ""
+	applyDefaults(&cfg)
+	if cfg.Tracking.BlossomURL != "http://127.0.0.1:3001" {
+		t.Fatal(cfg.Tracking.BlossomURL)
+	}
+	for _, value := range []string{"javascript:alert(1)", "http://user:pass@example.org", "http://example.org/?secret=x"} {
+		cfg.Tracking.BlossomURL = value
+		if cfg.Validate() == nil {
+			t.Fatalf("accepted invalid Blossom URL %q", value)
+		}
+	}
+	cfg.Tracking.BlossomURL = "https://blossom.example.org"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTrackingNostrTravelDistanceDefaultsAndValidation(t *testing.T) {
+	cfg := Default()
+	cfg.Tracking.NostrMinTrackDistance = nil
+	applyDefaults(&cfg)
+	if cfg.Tracking.NostrMinTrackDistance == nil || *cfg.Tracking.NostrMinTrackDistance != 800 {
+		t.Fatal("old tracker default was not applied")
+	}
+	zero := 0.0
+	cfg.Tracking.NostrMinTrackDistance = &zero
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("zero must include all tracks: %v", err)
+	}
+	negative := -1.0
+	cfg.Tracking.NostrMinTrackDistance = &negative
+	if cfg.Validate() == nil {
+		t.Fatal("accepted a negative distance")
+	}
+}
+
+func TestOverlayAppearanceDefaultsAndPersistence(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "settings.json"))
+	cfg := Default()
+	cfg.Tracking.OverlayBoxScale, cfg.Tracking.OverlayBoxThickness, cfg.Tracking.OverlayPathThickness = nil, nil, nil
+	if err := store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *loaded.Tracking.OverlayBoxScale != 4 || *loaded.Tracking.OverlayBoxThickness != 1.5 || *loaded.Tracking.OverlayPathThickness != 1 {
+		t.Fatalf("wrong legacy defaults: %+v", loaded.Tracking)
+	}
+	loaded.Tracking.OverlayBoxScale = floatPointer(6)
+	loaded.Tracking.OverlayBoxThickness = floatPointer(0.75)
+	loaded.Tracking.OverlayPathThickness = floatPointer(0.5)
+	if err := store.Save(loaded); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *loaded.Tracking.OverlayBoxScale != 6 || *loaded.Tracking.OverlayBoxThickness != 0.75 || *loaded.Tracking.OverlayPathThickness != 0.5 {
+		t.Fatalf("settings did not persist: %+v", loaded.Tracking)
+	}
+	loaded.Tracking.OverlayBoxScale = floatPointer(0)
+	if err := loaded.Validate(); err == nil {
+		t.Fatal("accepted invalid box scale")
+	}
+	loaded.Tracking.OverlayBoxScale = floatPointer(4)
+	loaded.Tracking.OverlayBoxThickness = floatPointer(0)
+	if err := loaded.Validate(); err == nil {
+		t.Fatal("accepted invalid box thickness")
+	}
+	loaded.Tracking.OverlayBoxThickness = floatPointer(1)
+	loaded.Tracking.OverlayPathThickness = floatPointer(13)
+	if err := loaded.Validate(); err == nil {
+		t.Fatal("accepted invalid path thickness")
+	}
+}

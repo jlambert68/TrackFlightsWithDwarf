@@ -129,6 +129,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		if err := enc.Encode(map[string]any{"type": "session", "directory": sessionDir}); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	}
 }
 

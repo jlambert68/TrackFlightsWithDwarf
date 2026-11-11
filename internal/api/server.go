@@ -85,6 +85,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/tracking/inputs", s.trackingUpload)
 	mux.HandleFunc("POST /api/v1/tracking/start", s.trackingStart)
 	mux.HandleFunc("GET /api/v1/tracking/preview", s.trackingPreview)
+	mux.HandleFunc("GET /api/v1/tracking/nostr-schema", trackingNostrSchema)
+	mux.HandleFunc("GET /api/v1/nostr/messages/stream", s.nostrMessagesStream)
 	mux.HandleFunc("GET /api/v1/tracking/events", s.trackingEvents)
 	mux.HandleFunc("GET /api/v1/tracking/events/{id}/files", s.trackingEventFiles)
 	mux.HandleFunc("GET /api/v1/tracking/events/{id}/files/{path...}", s.trackingEventFile)

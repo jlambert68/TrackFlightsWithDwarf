@@ -13,7 +13,7 @@ export function ObjectTracking() {
   const [mode, setMode] = useState<'file' | 'live'>('file')
   const [url, setURL] = useState('rtsp://192.168.88.1/ch0/stream0')
   const [profile, setProfile] = useState('general')
-  const [original, setOriginal] = useState(false), [mask, setMask] = useState(false), [fullVideo, setFullVideo] = useState(true)
+  const [original, setOriginal] = useState(true), [mask, setMask] = useState(false), [fullVideo, setFullVideo] = useState(true)
   const [minArea, setMinArea] = useState(''), [slowSpeed, setSlowSpeed] = useState(''), [fastSpeed, setFastSpeed] = useState(''), [threshold, setThreshold] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)

@@ -10,6 +10,25 @@ export function frameAtTime(frames, seconds) {
   return low ? frames[low - 1] : undefined
 }
 
+export function selectedTrackAtTime(frames, selected, seconds) {
+  if (selected == null) return undefined
+  return frameAtTime(frames, seconds)?.tracks?.find(track => track.id === selected)
+}
+
+// Expand tiny boxes for display while retaining the detected center.
+export function visibleTrackBox(track, width, height, scale = 4) {
+  const boxWidth = Math.min(width, Math.max(track.box_width * scale, width * scale * 0.01))
+  const boxHeight = Math.min(height, Math.max(track.box_height * scale, height * scale * 0.01))
+  const centerX = track.box_x + track.box_width / 2
+  const centerY = track.box_y + track.box_height / 2
+  return {
+    x: Math.max(0, Math.min(width - boxWidth, centerX - boxWidth / 2)),
+    y: Math.max(0, Math.min(height - boxHeight, centerY - boxHeight / 2)),
+    width: boxWidth,
+    height: boxHeight,
+  }
+}
+
 export function pathAtTime(points, seconds, maxPoints = 1000) {
   const time = seconds * 1000
   let low = 0, high = points.length

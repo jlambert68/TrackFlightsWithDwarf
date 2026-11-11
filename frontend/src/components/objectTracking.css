@@ -26,6 +26,18 @@
 .tracked-video-player { position: relative; width: min(100%, 960px); line-height: 0; background: #030914; }
 .tracked-video-player video { display: block; width: 100%; height: auto; }
 .tracked-video-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.video-comparison-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.video-comparison-grid h3 { margin: .5rem 0; }
+.video-comparison-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: .8rem 0; }
+.video-comparison-controls input[type=range] { flex: 1; min-width: 8rem; }
+.video-overlay-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin: .8rem 0; }
+.video-overlay-controls label { display: inline-flex; align-items: center; gap: .5rem; }
+.video-overlay-settings { margin: .8rem 0; }
+.video-overlay-settings > div { display: flex; flex-wrap: wrap; align-items: end; gap: .7rem; margin-top: .7rem; }
+.video-overlay-settings label { display: grid; gap: .25rem; font-size: .85rem; }
+.video-overlay-settings input { width: 7rem; }
+.original-overlay-option { display: inline-flex; align-items: center; gap: .5rem; }
+@media (max-width: 600px) { .video-comparison-grid { grid-template-columns: 1fr; } }
 .tracked-objects { margin: 1rem 0; }
 .tracked-objects select, .tracked-objects input { color: #e9f4ff; background: #10243a; border: 1px solid #31526e; padding: .45rem; }
 .object-name, .object-playback { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: .7rem 0; }
@@ -34,3 +46,10 @@
 .object-closeup { image-rendering: pixelated; }
 .object-path { border: 1px solid #25415d; }
 .object-playback input { flex: 1; min-width: 120px; }
+.nostr-settings { display: grid; gap: .6rem; max-width: 48rem; margin: 1rem 0; }
+.blossom-button { display: inline-block; padding: .55rem .8rem; margin: 0 .8rem .8rem 0; border: 1px solid #31526e; border-radius: .35rem; background: #15324a; color: #e9f4ff !important; text-decoration: none; }
+.nostr-settings label { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.nostr-settings input:not([type=checkbox]) { flex: 1; min-width: 15rem; }
+.nostr-messages { display: grid; gap: .6rem; margin-top: 1rem; }
+.nostr-messages article { border: 1px solid #25415d; border-radius: .4rem; padding: .8rem; }
+.nostr-messages pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }

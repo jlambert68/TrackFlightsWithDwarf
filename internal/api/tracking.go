@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -35,6 +36,7 @@ type trackingState struct {
 	mu      sync.Mutex
 	namesMu sync.Mutex
 	videoMu sync.Mutex
+	relayMu sync.Mutex
 	jobID   string
 	preview []byte
 	frame   map[string]any
@@ -136,7 +138,7 @@ func (s *Server) trackingStart(w http.ResponseWriter, r *http.Request) {
 		Mode      string `json:"mode"`
 		Input     string `json:"input"`
 		Profile   string `json:"profile"`
-		Original  bool   `json:"original"`
+		Original  *bool  `json:"original"`
 		Mask      bool   `json:"mask"`
 		FullVideo bool   `json:"fullVideo"`
 		trackingOptions
@@ -226,8 +228,12 @@ func (s *Server) trackingStart(w http.ResponseWriter, r *http.Request) {
 	}
 	s.tracking.preview = nil
 	s.tracking.frame = nil
+	original := true
+	if req.Original != nil {
+		original = *req.Original
+	}
 	job := s.jobs.Start("object-tracking", func(ctx context.Context, progress func(float64, string)) error {
-		return s.runTracking(ctx, worker, req.Mode, input, req.Profile, req.Original, req.Mask, req.FullVideo, req.trackingOptions, progress)
+		return s.runTracking(ctx, worker, req.Mode, input, req.Profile, original, req.Mask, req.FullVideo, req.trackingOptions, progress)
 	})
 	s.tracking.jobID = job.ID
 	writeJSON(w, 202, job)
@@ -253,7 +259,6 @@ func (s *Server) runTracking(ctx context.Context, worker, mode, input, profile s
 		return err
 	}
 	finished := make(chan struct{})
-	defer close(finished)
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -268,6 +273,8 @@ func (s *Server) runTracking(ctx context.Context, worker, mode, input, profile s
 	}()
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
+	var eventIDs []string
+	sessionID := ""
 	for scanner.Scan() {
 		var data map[string]any
 		if json.Unmarshal(scanner.Bytes(), &data) != nil {
@@ -293,12 +300,25 @@ func (s *Server) runTracking(ctx context.Context, worker, mode, input, profile s
 		if data["type"] == "export" {
 			progress(0.99, "Encoding full tracked video")
 		}
+		if data["type"] == "event" || data["type"] == "session" {
+			if dir, ok := data["directory"].(string); ok {
+				id := filepath.Base(dir)
+				if id != "." && id != ".." && filepath.Clean(dir) == filepath.Clean(filepath.Join(s.trackingEventsRoot(), id)) {
+					if data["type"] == "event" {
+						eventIDs = append(eventIDs, id)
+					} else {
+						sessionID = id
+					}
+				}
+			}
+		}
 	}
 	scanErr := scanner.Err()
 	if scanErr != nil {
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
+	close(finished)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -307,6 +327,18 @@ func (s *Server) runTracking(ctx context.Context, worker, mode, input, profile s
 	}
 	if waitErr != nil {
 		return fmt.Errorf("tracking failed: %s", strings.TrimSpace(stderr.String()))
+	}
+	settings := s.currentConfig().Tracking
+	if settings.NostrEnabled != nil && *settings.NostrEnabled {
+		progress(0.99, "Publishing tracking results to Nostr")
+		if err := s.publishTrackingResults(ctx, settings, input, mode, eventIDs, sessionID); err != nil {
+			if errors.Is(err, errTrackingMediaUnavailable) {
+				progress(1, "Results published, but some object media could not be uploaded to Blossom")
+				return nil
+			}
+			return fmt.Errorf("tracking completed, but Nostr publication failed: %w", err)
+		}
+		progress(1, "Tracking results published to Nostr")
 	}
 	return nil
 }
@@ -443,7 +475,7 @@ func (s *Server) trackingEventFiles(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	original, _, openErr := s.openTrackingOriginal(id)
+	original, _, _, openErr := s.openTrackingOriginal(id)
 	if openErr == nil {
 		original.Close()
 	}

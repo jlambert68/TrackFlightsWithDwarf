@@ -62,7 +62,18 @@ type DwarfConfig struct {
 }
 
 type TrackingConfig struct {
-	OutputDir string `json:"outputDir"`
+	OutputDir             string   `json:"outputDir"`
+	NostrEnabled          *bool    `json:"nostrEnabled"`
+	NostrRelayURL         string   `json:"nostrRelayUrl"`
+	NostrAutoStart        *bool    `json:"nostrAutoStart"`
+	NostrKeyFile          string   `json:"nostrKeyFile"`
+	BlossomURL            string   `json:"blossomUrl"`
+	BlossomPublicURL      string   `json:"blossomPublicUrl"`
+	NostrMinTrackDistance *float64 `json:"nostrMinTrackDistance"`
+	NostrUseObjectGIF     bool     `json:"nostrUseObjectGif"`
+	OverlayBoxScale       *float64 `json:"overlayBoxScale"`
+	OverlayBoxThickness   *float64 `json:"overlayBoxThickness"`
+	OverlayPathThickness  *float64 `json:"overlayPathThickness"`
 }
 
 func Default() Config {
@@ -71,7 +82,7 @@ func Default() Config {
 		Server:   ServerConfig{ListenAddress: "127.0.0.1:8080", AccessMode: "loopback"},
 		Flight:   FlightConfig{NostrEnabled: boolPointer(true), NostrRelayURL: "ws://127.0.0.1:7447", Device: "0", Gain: "auto", TrackingDir: "flights", HomeName: "Tottkällevägen 4A, Värmdö", Latitude: 59.323316, Longitude: 18.480349, TileURL: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", TerrainURL: "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer", ShowAirports: true, TerrainHeightMultiplier: floatPointer(1), HistoryLookbackMinutes: intPointer(5), HistoryBaseURL: "https://adsb.lol", AircraftExpirySeconds: intPointer(300)},
 		Dwarf:    DwarfConfig{Host: "192.168.88.1", Camera: "tele"},
-		Tracking: TrackingConfig{OutputDir: "events"},
+		Tracking: TrackingConfig{OutputDir: "events", NostrEnabled: boolPointer(true), NostrRelayURL: "ws://127.0.0.1:7448", NostrAutoStart: boolPointer(true), NostrKeyFile: "tracking/nostr.key", BlossomURL: "http://127.0.0.1:3001", NostrMinTrackDistance: floatPointer(800), OverlayBoxScale: floatPointer(4), OverlayBoxThickness: floatPointer(1.5), OverlayPathThickness: floatPointer(1)},
 	}
 }
 
@@ -120,6 +131,43 @@ func (c Config) Validate() error {
 			return errors.New("invalid flight history service URL")
 		}
 	}
+	if c.Tracking.NostrRelayURL != "" {
+		u, err := url.Parse(c.Tracking.NostrRelayURL)
+		if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("invalid tracking Nostr relay URL")
+		}
+	}
+	if c.Tracking.NostrEnabled != nil && *c.Tracking.NostrEnabled && (c.Tracking.NostrRelayURL == "" || strings.TrimSpace(c.Tracking.NostrKeyFile) == "") {
+		return errors.New("tracking Nostr relay URL and key file are required when publishing is enabled")
+	}
+	if c.Tracking.BlossomURL != "" {
+		u, err := url.Parse(c.Tracking.BlossomURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("invalid Blossom server URL")
+		}
+	}
+	if c.Tracking.BlossomPublicURL != "" {
+		u, err := url.Parse(c.Tracking.BlossomPublicURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("invalid public Blossom URL")
+		}
+	}
+	if c.Tracking.NostrMinTrackDistance != nil && (math.IsNaN(*c.Tracking.NostrMinTrackDistance) || math.IsInf(*c.Tracking.NostrMinTrackDistance, 0) || *c.Tracking.NostrMinTrackDistance < 0 || *c.Tracking.NostrMinTrackDistance > 1000000) {
+		return errors.New("Nostr minimum track distance must be between 0 and 1000000 pixels")
+	}
+	for _, setting := range []struct {
+		name     string
+		value    *float64
+		min, max float64
+	}{
+		{"overlay box scale", c.Tracking.OverlayBoxScale, 1, 20},
+		{"overlay box thickness", c.Tracking.OverlayBoxThickness, 0.25, 12},
+		{"overlay path thickness", c.Tracking.OverlayPathThickness, 0.25, 12},
+	} {
+		if setting.value != nil && (math.IsNaN(*setting.value) || math.IsInf(*setting.value, 0) || *setting.value < setting.min || *setting.value > setting.max) {
+			return fmt.Errorf("%s must be between %g and %g", setting.name, setting.min, setting.max)
+		}
+	}
 	return nil
 }
 
@@ -154,6 +202,34 @@ func (s *Store) Load() (Config, error) {
 
 func applyDefaults(cfg *Config) {
 	defaults := Default().Flight
+	trackingDefaults := Default().Tracking
+	if cfg.Tracking.OverlayBoxScale == nil {
+		cfg.Tracking.OverlayBoxScale = floatPointer(4)
+	}
+	if cfg.Tracking.OverlayBoxThickness == nil {
+		cfg.Tracking.OverlayBoxThickness = floatPointer(1.5)
+	}
+	if cfg.Tracking.OverlayPathThickness == nil {
+		cfg.Tracking.OverlayPathThickness = floatPointer(1)
+	}
+	if cfg.Tracking.NostrMinTrackDistance == nil {
+		cfg.Tracking.NostrMinTrackDistance = floatPointer(800)
+	}
+	if cfg.Tracking.BlossomURL == "" {
+		cfg.Tracking.BlossomURL = trackingDefaults.BlossomURL
+	}
+	if cfg.Tracking.NostrEnabled == nil {
+		cfg.Tracking.NostrEnabled = boolPointer(true)
+		if cfg.Tracking.NostrRelayURL == "" {
+			cfg.Tracking.NostrRelayURL = trackingDefaults.NostrRelayURL
+		}
+	}
+	if cfg.Tracking.NostrAutoStart == nil {
+		cfg.Tracking.NostrAutoStart = boolPointer(true)
+	}
+	if cfg.Tracking.NostrKeyFile == "" {
+		cfg.Tracking.NostrKeyFile = trackingDefaults.NostrKeyFile
+	}
 	if cfg.Flight.NostrEnabled == nil {
 		cfg.Flight.NostrEnabled = boolPointer(true)
 		if cfg.Flight.NostrRelayURL == "" {

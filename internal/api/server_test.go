@@ -25,6 +25,8 @@ func newTestServer(t *testing.T) *Server {
 	root := t.TempDir()
 	store := config.NewStore(filepath.Join(root, "config.json"))
 	cfg := config.Default()
+	disabled := false
+	cfg.Tracking.NostrEnabled = &disabled
 	if err := store.Save(cfg); err != nil {
 		t.Fatal(err)
 	}

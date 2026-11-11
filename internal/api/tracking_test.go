@@ -17,7 +17,9 @@ import (
 func TestTrackingVideoAndWorker(t *testing.T) {
 	s := newTestServer(t)
 	worker := filepath.Join(t.TempDir(), "worker")
-	script := "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"frame\",\"frame\":42,\"progress\":0.5,\"status\":\"tracking\",\"jpeg\":\"/9j/2Q==\"}'\n"
+	argsFile := filepath.Join(t.TempDir(), "worker-args")
+	t.Setenv("TRACKFLIGHTS_TEST_ARGS_FILE", argsFile)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TRACKFLIGHTS_TEST_ARGS_FILE\"\nprintf '%s\\n' '{\"type\":\"frame\",\"frame\":42,\"progress\":0.5,\"status\":\"tracking\",\"jpeg\":\"/9j/2Q==\"}'\n"
 	if err := os.WriteFile(worker, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +60,10 @@ func TestTrackingVideoAndWorker(t *testing.T) {
 	}
 	if j := s.jobs.Get(job.ID); j.State != "succeeded" {
 		t.Fatalf("tracking: %+v", j)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil || !strings.Contains(string(args), "-original=true\n") {
+		t.Fatalf("original event video is not enabled by default: %s %v", args, err)
 	}
 	res = httptest.NewRecorder()
 	s.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/preview", nil))

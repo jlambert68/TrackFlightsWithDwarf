@@ -8,7 +8,7 @@ type Track = Point & VideoTrack & {speed_px_s?: number}
 type Frame = {source_frame: number; time_ms: number; tracks: Track[]}
 type Observation = {frame: number; time: number; track: Track}
 
-export function TrackedObjects({eventID, files, fileURL, videoURL, needsConversion = false}: {eventID: string; files: string[]; fileURL: (path: string) => string; videoURL?: string; needsConversion?: boolean}) {
+export function TrackedObjects({eventID, files, fileURL, trackedURL, originalURL, trackedNeedsConversion}: {eventID: string; files: string[]; fileURL: (path: string) => string; trackedURL?: string; originalURL?: string; trackedNeedsConversion: boolean}) {
   const [frames, setFrames] = useState<Frame[]>([])
   const [cropFiles, setCropFiles] = useState<string[]>([])
   const [names, setNames] = useState<Record<string, string>>({})
@@ -87,7 +87,7 @@ export function TrackedObjects({eventID, files, fileURL, videoURL, needsConversi
       setNames(await r.json()); setMessage('Name saved')
     } catch (e) { setMessage(e instanceof Error ? e.message : 'Could not save object name') }
   }
-  return <section className="tracked-objects">{videoURL && <><TrackingVideo key={eventID} url={videoURL} frames={frames} selected={selected} name={selected === null ? '' : names[String(selected)] ?? ''} sourceWidth={sourceSize.width} sourceHeight={sourceSize.height} needsConversion={needsConversion}/><p className="muted">Select an object below to highlight its position and path on the video.</p></>}<h3>Tracked objects</h3>
+  return <section className="tracked-objects">{(trackedURL || originalURL) && <TrackingVideo key={eventID} trackedURL={trackedURL} originalURL={originalURL} trackedNeedsConversion={trackedNeedsConversion} frames={frames} selected={selected} name={selected === null ? '' : names[String(selected)] ?? ''} sourceWidth={sourceSize.width} sourceHeight={sourceSize.height} objectOptions={[...objects.keys()].sort((a, b) => a - b).map(id => ({id, name: names[String(id)] ?? ''}))} onSelectObject={setSelected}/>}<h3>Tracked objects</h3>
     {objects.size === 0 ? <p className="muted">No object tracking data is available for this event.</p> : <>
       <label>Object <select value={selected ?? ''} onChange={e => setSelected(e.target.value ? Number(e.target.value) : null)}><option value="">Select an object</option>{[...objects.keys()].sort((a, b) => a - b).map(id => <option key={id} value={id}>#{id}{names[String(id)] ? ` — ${names[String(id)]}` : ''}</option>)}</select></label>
       {selected !== null && <><div className="object-name"><label>Name <input maxLength={128} value={name} onChange={e => setName(e.target.value)} /></label><button onClick={() => void save()}>Save name</button></div>

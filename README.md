@@ -185,7 +185,7 @@ Docker is required. The Makefile provides two independent relay presets:
 | Purpose | Container | Local WebSocket URL | Data directory for a new container |
 | --- | --- | --- | --- |
 | ADS-B flight signals | `nostr-relay` | `ws://127.0.0.1:7447` | `data/nostr-relay` |
-| Future recording analysis results | `nostr-relay-analysis` | `ws://127.0.0.1:7448` | `data/nostr-relay-analysis` |
+| Recording analysis results | `nostr-relay-analysis` | `ws://127.0.0.1:7448` | `data/nostr-relay-analysis` |
 
 Start them independently with:
 
@@ -199,9 +199,7 @@ it is not replaced or migrated. Each preset supports `nostr-pull-*`,
 `nostr-start-*`, `nostr-stop-*`, `nostr-restart-*`, `nostr-status-*`,
 `nostr-logs-*` and `nostr-check-*`, where `*` is `flight-data` or `analysis`.
 For example, `make nostr-check-analysis` requests the analysis relay's NIP-11
-information. Stopping a relay does not delete its data. The application does
-not yet publish recording analysis results; the second relay is ready for that
-future integration.
+information. Stopping a relay does not delete its data.
 
 For a new flight relay, override `NOSTR_CONTAINER`, `NOSTR_BIND`, `NOSTR_PORT`
 and `NOSTR_DATA_DIR` as needed. For the analysis relay, use
@@ -311,6 +309,11 @@ The default retention rules remove images after a month without access and
 videos and other files after a week without access. Review the configuration
 before relying on it for long-term storage.
 
+Use **Open Blossom server** in the **Nostr** tab to open its web page. The
+button's URL can be changed in the tab's tracking publication settings; use a
+browser-reachable address if accessing the app from another computer. Start
+the server with `make blossom-start` before opening it.
+
 The Compose project uses its own persistent Docker volume. Stopping the server
 does not remove its files, and this setup does not migrate or alter the old
 server's data. Use `BLOSSOM_BIND`, `BLOSSOM_PORT`, `BLOSSOM_PROJECT`, and
@@ -320,7 +323,7 @@ configuration path. Pass the same overrides to subsequent commands. The
 `BLOSSOM_HTTP_URL` overrides the URL it checks. `make blossom-build` explicitly
 builds the image, and `make blossom-restart` restarts the container.
 
-Object tracking does not yet upload its output to Blossom.
+Object tracking can upload representative crops for qualifying tracks to Blossom.
 
 ## Object tracking
 
@@ -356,6 +359,37 @@ Open **Events** to browse recorded tracking events and their files. The same
 event list is also available in **Object tracking**, and refreshes while a
 session is running.
 
+After a tracking job completes successfully, the main app publishes a signed
+analysis note to `ws://127.0.0.1:7448` by default. As in the earlier tracker,
+objects qualify when the straight-line distance between their first and last
+positions is at least 800 pixels. Change the threshold in the **Nostr** tab;
+zero includes all recorded tracks. The note includes the source name, event
+summaries and first/last positions for qualifying tracks, with at most 100
+events and 100 tracks per note, with further trimming to fit the relay's 16 KiB
+content limit. It records when results have been limited or omitted.
+It is a kind-1 Nostr event compatible with the earlier tracker's schema,
+available at `/api/v1/tracking/nostr-schema`. The JSON in its content has type
+`trackflights.tracking.analysis` and version `1`. Available object crops are
+uploaded to Blossom and included as media links and `imeta` tags. The **Nostr**
+tab can enable GIFs and set a public Blossom URL for other clients. Start the
+local server with `make blossom-start`; if an upload fails, the note is still
+published with a `mediaUnavailable` flag and the job reports the missing media.
+Publishing errors appear in the tracking job status; the
+recorded files remain available. Cancelled jobs do not publish a completion.
+
+The app checks the analysis relay before publishing. If the configured relay is
+local and auto-start is enabled, it runs `make nostr-start-analysis` when the
+relay is unavailable. Docker, access to the Docker daemon, and the relay image
+are required for auto-start. Use `make nostr-pull-analysis` to download the
+image in advance. The app verifies that the relay responds before publishing.
+The Nostr tab displays messages of all kinds from either configured relay,
+showing up to 100 stored messages on connection and new messages as they arrive.
+It also offers tracking publication settings: enable/disable publishing, relay
+URL, local auto-start and signing-key file. The key defaults to
+`data/tracking/nostr.key` and is created with owner-only permissions. Relay
+messages are signed but not encrypted, so everyone with access to the relay can
+read the published analysis.
+
 Select an event, then choose an object under **Tracked objects** to play its
 saved close-ups and view its path. Use the playback slider to inspect a point
 along the path. Enter a name and choose **Save name**; names are stored per
@@ -364,18 +398,23 @@ for the bundled sample are stored separately beneath the app's data root.
 New full-video sessions also save tracking metadata and sampled close-ups;
 older sessions without those files cannot show object details.
 
-For an event with a tracked video and tracking metadata, selecting an object
-also highlights its box and the path travelled so far on the video.
-The overlay follows video playback and seeking; it marks a temporarily missed
-detection as the last seen position.
-
-When an original recording is available, choose **Original video — selected
-object only** in the video selector, then select an object. The original has no
-embedded tracking marks, so only that object's box and path appear. Full-video
-sessions use their uploaded source as the original. For individual event clips,
-select **Save original video** before starting tracking; old events without an
-original clip cannot offer this view. Original videos are converted to a cached
+When both recordings are available, **Events** shows the tracked and original
+videos side by side. Shared play, pause and seek controls keep them together;
+if one buffers, both wait. On narrow screens they are stacked. Select an object
+above the videos and enable **Show selected object on original video** to overlay
+only that object's box and path; the overlay follows the shared video timeline.
+The original is otherwise unmarked. Full-video sessions
+use their uploaded source as the original. **Save original video** is enabled
+by default for new event clips; saving these files requires additional disk
+space. For older events without an original clip, the app tries to recover
+the corresponding frames from an uploaded source when the event uniquely
+matches a full session. Events without a saved or uniquely matched original
+show the tracked video alone. Original videos are converted to a cached
 browser-compatible MP4 on first viewing and require FFmpeg and disk space.
+
+Expand **Overlay appearance** above the videos to adjust the selected-object
+box size, box line thickness and tracking line thickness. These settings are
+saved in the app configuration and apply to the original-video overlay.
 
 Tracked videos play in the Events view, with a download link for the original
 file. Older AVI clips are converted to MP4 on first viewing with FFmpeg; this
