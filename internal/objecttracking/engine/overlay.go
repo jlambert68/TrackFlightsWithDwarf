@@ -61,6 +61,11 @@ func drawMetadataOverlay(frame *gocv.Mat, tracks []TrackMetadata, settings Track
 		}
 
 		drawTargetAndLabel(frame, t.ID, center, t.VX, t.VY, t.Speed, trackColor, arrowColor)
+		if t.Missed > 0 {
+			label := "last seen"
+			anchor := image.Pt(center.X, center.Y+30)
+			gocv.PutText(frame, label, overlayLabelPoint(frame, anchor, label, 0.8, 2), gocv.FontHersheySimplex, 0.8, trackColor, 2)
+		}
 	}
 }
 

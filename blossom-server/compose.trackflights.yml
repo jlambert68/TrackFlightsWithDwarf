@@ -1,0 +1,19 @@
+services:
+  blossom:
+    build:
+      context: .
+    ports:
+      - "${BLOSSOM_BIND:-127.0.0.1}:${BLOSSOM_PORT:-3001}:3000"
+    volumes:
+      - data:/app/data
+      - "${BLOSSOM_CONFIG:?Set BLOSSOM_CONFIG to the absolute config path}:/app/config.yml:ro"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "deno", "eval", "const r = await fetch('http://127.0.0.1:3000/'); if (!r.ok) Deno.exit(1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+volumes:
+  data: {}

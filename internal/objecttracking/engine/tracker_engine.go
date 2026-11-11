@@ -8,6 +8,7 @@ import (
 	"image"
 	"math"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gocv.io/x/gocv"
@@ -22,6 +23,7 @@ type TrackerConfig struct {
 	Input               string
 	InputLabel          string
 	OutputDir           string
+	FullVideoPath       string
 	ShowMask            bool
 	RecordEvents        bool
 	ExportOriginalVideo bool
@@ -196,6 +198,8 @@ func (e *TrackerEngine) Run() (runErr error) {
 	var buffer []BufferedFrame
 	var recorder *EventRecorder
 	var segmentRecorder *RawSegmentRecorder
+	var fullVideoWriter *gocv.VideoWriter
+	var fullVideoMetadata *EventRecorder
 	bufferDir, err := os.MkdirTemp("", "trackobject-buffer-*")
 	if err != nil {
 		return fmt.Errorf("create frame spool directory: %w", err)
@@ -205,6 +209,12 @@ func (e *TrackerEngine) Run() (runErr error) {
 	lastFrameTime := time.Time{}
 	defer func() {
 		runErr = errors.Join(runErr, finishTrackerRunResources(buffer, recorder, segmentRecorder, lastFrameTime))
+		if fullVideoWriter != nil {
+			runErr = errors.Join(runErr, fullVideoWriter.Close())
+		}
+		if fullVideoMetadata != nil {
+			runErr = errors.Join(runErr, fullVideoMetadata.closeTrackingStream())
+		}
 	}()
 
 	nextTrackID := 1
@@ -266,6 +276,9 @@ func (e *TrackerEngine) Run() (runErr error) {
 		}
 		processingFrame, analysisScale, err := frameForAnalysis(frame, &analysisFrame, analysisMaxWidth)
 		if err != nil {
+			if e.Config.FullVideoPath != "" {
+				return fmt.Errorf("prepare full tracked video frame %d: %w", sourceFrame, err)
+			}
 			continue
 		}
 		analysisSettings := trackingSettingsForScale(settings, analysisScale)
@@ -387,6 +400,33 @@ func (e *TrackerEngine) Run() (runErr error) {
 
 		meta := makeFrameMetadata(sourceFrame, firstFrameTime, now, tracks, settings)
 		meta.MeanLuma = gray.Mean().Val1
+		if e.Config.FullVideoPath != "" {
+			if fullVideoWriter == nil {
+				fullVideoWriter, err = openEventVideoWriter(e.Config.FullVideoPath, fps, frame.Cols(), frame.Rows(), true)
+				if err != nil {
+					return fmt.Errorf("create full tracked video: %w", err)
+				}
+				fullVideoMetadata = &EventRecorder{Directory: filepath.Dir(e.Config.FullVideoPath), StartedAt: firstFrameTime, FPS: fps, Width: frame.Cols(), Height: frame.Rows(), EventID: filepath.Base(filepath.Dir(e.Config.FullVideoPath)), Settings: settings, Capture: e.Config.Capture}
+				if err = fullVideoMetadata.openTrackingStream(); err != nil {
+					return err
+				}
+			}
+			if err = fullVideoMetadata.appendTrackingFrame(meta); err != nil {
+				return err
+			}
+			if previewFrameDue(sourceFrame, fps, 3) {
+				if err = fullVideoMetadata.saveTrackCropsForTracks(frame, tracks, meta); err != nil {
+					return err
+				}
+			}
+			overlay := frame.Clone()
+			drawMetadataOverlay(&overlay, meta.Tracks, settings)
+			err = fullVideoWriter.Write(overlay)
+			overlay.Close()
+			if err != nil {
+				return fmt.Errorf("write full tracked video: %w", err)
+			}
+		}
 		interesting := hasFreshInterestingTracks(tracks, settings)
 
 		if interesting {

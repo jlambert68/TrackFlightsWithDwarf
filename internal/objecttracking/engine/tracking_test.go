@@ -200,7 +200,7 @@ func TestNormalizeTrackingSettingsReplacesNonFiniteValues(t *testing.T) {
 	}
 }
 
-func TestMakeTrailMetadataKeepsRecentDisplayHistoryBounded(t *testing.T) {
+func TestMakeTrailMetadataPreservesWholePathBounded(t *testing.T) {
 	points := make([]image.Point, maxMetadataTrailPoints+10)
 	for i := range points {
 		points[i] = image.Pt(i, i*2)
@@ -210,8 +210,37 @@ func TestMakeTrailMetadataKeepsRecentDisplayHistoryBounded(t *testing.T) {
 	if len(trail) != maxMetadataTrailPoints {
 		t.Fatalf("unexpected trail length: got %d want %d", len(trail), maxMetadataTrailPoints)
 	}
-	if trail[0] != (TrailPoint{X: 10, Y: 20}) || trail[len(trail)-1] != (TrailPoint{X: len(points) - 1, Y: (len(points) - 1) * 2}) {
-		t.Fatalf("trail did not retain the most recent points: first=%+v last=%+v", trail[0], trail[len(trail)-1])
+	if trail[0] != (TrailPoint{X: 0, Y: 0}) || trail[len(trail)-1] != (TrailPoint{X: len(points) - 1, Y: (len(points) - 1) * 2}) {
+		t.Fatalf("trail did not retain both ends: first=%+v last=%+v", trail[0], trail[len(trail)-1])
+	}
+}
+
+func TestSmallTrackSurvivesDetectionGap(t *testing.T) {
+	settings := DefaultTrackingSettings()
+	settings.MinHits = 2
+	settings.SlowMinSpeed = 0
+	settings.MinSpeed = 1
+	started := time.Unix(1700000000, 0)
+	step := time.Second / 10
+	tracks, next := []*Track{}, 1
+	for frame := 0; frame < 4; frame++ {
+		x := 100 + frame*4
+		tracks, next = updateTracks(tracks, []Detection{{Rect: image.Rect(x-3, 97, x+3, 103), Center: image.Pt(x, 100)}}, started.Add(time.Duration(frame)*step), step.Seconds(), next, settings)
+	}
+	for frame := 4; frame < 20; frame++ {
+		tracks, next = updateTracks(tracks, nil, started.Add(time.Duration(frame)*step), step.Seconds(), next, settings)
+		meta := makeFrameMetadata(frame, started, started.Add(time.Duration(frame)*step), tracks, settings)
+		if len(meta.Tracks) != 1 || meta.Tracks[0].Missed == 0 {
+			t.Fatalf("lost track during gap: %+v", meta.Tracks)
+		}
+	}
+	x := 180
+	tracks, next = updateTracks(tracks, []Detection{{Rect: image.Rect(x-3, 97, x+3, 103), Center: image.Pt(x, 100)}}, started.Add(20*step), step.Seconds(), next, settings)
+	if len(tracks) != 1 || tracks[0].ID != 1 || tracks[0].Missed != 0 || next != 2 {
+		t.Fatalf("track split after gap: %+v", tracks)
+	}
+	if tracks[0].Trail[0] != image.Pt(100, 100) {
+		t.Fatal("lost path start")
 	}
 }
 

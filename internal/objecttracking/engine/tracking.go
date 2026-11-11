@@ -20,10 +20,29 @@ func maxMissedFramesForSettings(settings TrackingSettings) int {
 }
 
 func maxMissedFramesForTrack(track *Track, settings TrackingSettings) int {
+	if isEstablishedSmallTrack(track, settings) {
+		return 24
+	}
 	if settings.Profile == trackingProfileBall || (track != nil && track.Speed >= settings.MinSpeed) {
 		return 12
 	}
 	return maxMissedFramesForSettings(settings)
+}
+
+func isEstablishedSmallTrack(track *Track, settings TrackingSettings) bool {
+	return track != nil && track.Hits >= settings.MinHits*2 && track.Rect.Dx() <= 48 && track.Rect.Dy() <= 48
+}
+
+func trackElapsed(track *Track, now time.Time, frameDT float64, settings TrackingSettings) float64 {
+	dt := now.Sub(track.LastUpdate).Seconds()
+	limit := 1.0
+	if isEstablishedSmallTrack(track, settings) {
+		limit = 3
+	}
+	if dt <= 0 || dt > limit {
+		return frameDT
+	}
+	return dt
 }
 
 // findDetections converts the cleaned foreground mask into bounding boxes and
@@ -185,10 +204,7 @@ func updateTracks(
 				continue
 			}
 
-			dt := now.Sub(track.LastUpdate).Seconds()
-			if dt <= 0 || dt > 1 {
-				dt = frameDT
-			}
+			dt := trackElapsed(track, now, frameDT, settings)
 			if settings.Profile == trackingProfileBall {
 				dt = frameDT
 			}
@@ -217,10 +233,7 @@ func updateTracks(
 		track := tracks[bestTrack]
 		detection := detections[bestDetection]
 
-		dt := now.Sub(track.LastUpdate).Seconds()
-		if dt <= 0 || dt > 1 {
-			dt = frameDT
-		}
+		dt := trackElapsed(track, now, frameDT, settings)
 
 		oldPosition := track.Position
 		dx := float64(detection.Center.X - oldPosition.X)
@@ -375,10 +388,6 @@ func makeFrameMetadata(sourceFrame int, start, now time.Time, tracks []*Track, s
 	}
 
 	for _, t := range tracks {
-		if t.Missed > 0 {
-			continue
-		}
-
 		trackType, ok := classifyTrack(t, settings)
 		if t.Hits < settings.MinHits || !ok {
 			continue
@@ -396,6 +405,7 @@ func makeFrameMetadata(sourceFrame int, start, now time.Time, tracks []*Track, s
 			VX:        t.VX,
 			VY:        t.VY,
 			Speed:     t.Speed,
+			Missed:    t.Missed,
 			Trail:     makeTrailMetadata(t.Trail),
 		})
 	}
@@ -407,12 +417,14 @@ func makeTrailMetadata(points []image.Point) []TrailPoint {
 	if len(points) == 0 {
 		return nil
 	}
-	if len(points) > maxMetadataTrailPoints {
-		points = points[len(points)-maxMetadataTrailPoints:]
-	}
-
-	trail := make([]TrailPoint, len(points))
-	for i, point := range points {
+	count := min(len(points), maxMetadataTrailPoints)
+	trail := make([]TrailPoint, count)
+	for i := range trail {
+		index := i
+		if len(points) > count {
+			index = i * (len(points) - 1) / (count - 1)
+		}
+		point := points[index]
 		trail[i] = TrailPoint{X: point.X, Y: point.Y}
 	}
 	return trail

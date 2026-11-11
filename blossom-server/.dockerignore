@@ -1,0 +1,25 @@
+# Runtime data — never bake into image; mounted as a named volume
+data/
+
+# Config — mounted at runtime via docker-compose.yml volume
+config.yml
+
+# Tests — not needed at runtime
+tests/
+
+# Git submodule (BUD spec reference) — read-only docs, not needed at runtime
+blossom/
+
+# Session files
+.sessions/
+
+# Dev environment
+.env
+.github/
+.vscode/
+
+# Top-level node_modules (none should exist, but guard against accidental copy)
+/node_modules/
+
+# Ignore just the built client.js — it will be built in the container
+public/client.js

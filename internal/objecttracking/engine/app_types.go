@@ -246,10 +246,11 @@ type TrackMetadata struct {
 	BoxWidth  int `json:"box_width"`
 	BoxHeight int `json:"box_height"`
 
-	VX    float64      `json:"vx"`
-	VY    float64      `json:"vy"`
-	Speed float64      `json:"speed_px_s"`
-	Trail []TrailPoint `json:"trail"`
+	VX     float64      `json:"vx"`
+	VY     float64      `json:"vy"`
+	Speed  float64      `json:"speed_px_s"`
+	Missed int          `json:"missed_frames,omitempty"`
+	Trail  []TrailPoint `json:"trail"`
 }
 
 const (

@@ -40,9 +40,14 @@ NOSTR_ANALYSIS_BIND ?= $(NOSTR_BIND)
 NOSTR_ANALYSIS_PORT ?= 7448
 NOSTR_ANALYSIS_DATA_DIR ?= $(DATA_ROOT)/nostr-relay-analysis
 NOSTR_ANALYSIS_HTTP_URL ?= http://127.0.0.1:$(NOSTR_ANALYSIS_PORT)
+BLOSSOM_PROJECT ?= trackflights-blossom
+BLOSSOM_BIND ?= 127.0.0.1
+BLOSSOM_PORT ?= 3001
+BLOSSOM_CONFIG ?= $(DATA_ROOT)/blossom/config.yml
+BLOSSOM_HTTP_URL ?= http://127.0.0.1:$(BLOSSOM_PORT)
 
 .DEFAULT_GOAL := help
-.PHONY: help install-tracking build-tracking test-tracking run-tracking install-python install-go install-sdr initial-setup frontend-install frontend-build typecheck test test-local test-go-installer test-nostr-relays test-pi test-sdr run run-local run-sdr stop-local build build-sdr build-pi build-sdr-pi run-pi run-sdr-pi run-local-pi clean nostr-pull-flight-data nostr-start-flight-data nostr-stop-flight-data nostr-restart-flight-data nostr-status-flight-data nostr-logs-flight-data nostr-check-flight-data nostr-build-native-flight-data nostr-pull-analysis nostr-start-analysis nostr-stop-analysis nostr-restart-analysis nostr-status-analysis nostr-logs-analysis nostr-check-analysis validate-analysis-relay
+.PHONY: help blossom-init blossom-build blossom-start blossom-stop blossom-restart blossom-status blossom-logs blossom-check install-ffmpeg install-tracking build-tracking test-tracking run-tracking install-python install-go install-sdr initial-setup frontend-install frontend-build typecheck test test-local test-go-installer test-nostr-relays test-blossom test-pi test-sdr run run-local run-sdr stop-local build build-sdr build-pi build-sdr-pi run-pi run-sdr-pi run-local-pi clean nostr-pull-flight-data nostr-start-flight-data nostr-stop-flight-data nostr-restart-flight-data nostr-status-flight-data nostr-logs-flight-data nostr-check-flight-data nostr-build-native-flight-data nostr-pull-analysis nostr-start-analysis nostr-stop-analysis nostr-restart-analysis nostr-status-analysis nostr-logs-analysis nostr-check-analysis validate-analysis-relay
 
 help: ## Show available commands.
 	@awk 'BEGIN {FS = ":.*##"}; /^[a-zA-Z_-]+:.*##/ {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -55,6 +60,10 @@ install-sdr: ## Install Ubuntu RTL-SDR tools, library and USB rules using apt.
 	$(SUDO) $(APT_GET) update
 	$(SUDO) $(APT_GET) install -y rtl-sdr
 
+install-ffmpeg: ## Install FFmpeg for video playback and export using Ubuntu apt.
+	$(SUDO) $(APT_GET) update
+	$(SUDO) $(APT_GET) install -y ffmpeg
+
 install-tracking: ## Install Ubuntu OpenCV development libraries and FFmpeg for object tracking.
 	$(SUDO) $(APT_GET) update
 	$(SUDO) $(APT_GET) install -y libopencv-dev libopencv-contrib-dev pkg-config g++ ffmpeg
@@ -65,7 +74,7 @@ build-tracking: ## Build the optional OpenCV object tracking worker.
 
 test-tracking: build-tracking ## Run the migrated OpenCV tracking and worker integration tests.
 	PKG_CONFIG_LIBDIR="$(OPENCV_PKG_CONFIG_LIBDIR)" CGO_ENABLED=1 GOCACHE="$(GOCACHE)" $(GO) test -tags opencv ./internal/objecttracking/engine
-	TRACKFLIGHTS_INTEGRATION_WORKER="$(BIN_DIR)/tracking-worker" GOCACHE="$(GOCACHE)" $(GO) test ./internal/api -run TestTrackingOpenCVIntegration -count=1
+	TRACKFLIGHTS_INTEGRATION_WORKER="$(BIN_DIR)/tracking-worker" GOCACHE="$(GOCACHE)" $(GO) test ./internal/api -run 'TestTracking(OpenCV|FullVideo)Integration' -count=1
 
 run-tracking: frontend-build build-tracking ## Build the tracking worker and run the web app.
 	TRACKFLIGHTS_TRACKING_WORKER="$(BIN_DIR)/tracking-worker" TRACKFLIGHTS_DATA_ROOT="$(DATA_ROOT)" GOCACHE="$(GOCACHE)" $(GO) run ./cmd/trackflights
@@ -90,6 +99,7 @@ typecheck: ## Typecheck the React frontend.
 	$(NPM) --prefix frontend run typecheck
 
 test: frontend-build ## Run Go and frontend validation.
+	$(NPM) --prefix frontend run test
 	GOCACHE=$(GOCACHE) $(GO) test ./...
 	$(MAKE) test-local
 
@@ -106,7 +116,10 @@ test-go-installer: ## Test Go installer architecture and integrity handling.
 test-nostr-relays: ## Test named relay configuration without Docker.
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s scripts -p 'nostr_relays_test.py'
 
-test-local: test-go-installer test-nostr-relays ## Test local service startup and shutdown without SDR hardware.
+test-blossom: ## Test Blossom configuration and Docker command wiring.
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s scripts -p 'blossom_test.py'
+
+test-local: test-go-installer test-nostr-relays test-blossom ## Test local service startup and shutdown without SDR hardware.
 	bash "$(CURDIR)/scripts/local-services-test.sh"
 
 run: frontend-build ## Build the UI and start the local server at http://127.0.0.1:8080.
@@ -202,6 +215,33 @@ nostr-logs-analysis: ## Show the last 100 analysis relay log lines.
 
 nostr-check-analysis: ## Check the analysis relay and fetch its NIP-11 information.
 	@$(NOSTR_ANALYSIS_ENV) bash "$(CURDIR)/scripts/nostr-relay.sh" check
+
+BLOSSOM_COMPOSE = BLOSSOM_BIND="$(BLOSSOM_BIND)" BLOSSOM_PORT="$(BLOSSOM_PORT)" BLOSSOM_CONFIG="$(abspath $(BLOSSOM_CONFIG))" $(DOCKER) compose --project-name "$(BLOSSOM_PROJECT)" -f "$(CURDIR)/blossom-server/compose.trackflights.yml"
+
+blossom-init: ## Create a Blossom configuration without overwriting an existing one.
+	@mkdir -p "$(dir $(abspath $(BLOSSOM_CONFIG)))"
+	@if [ ! -e "$(BLOSSOM_CONFIG)" ]; then cp -n "$(CURDIR)/blossom-server/config.example.yml" "$(BLOSSOM_CONFIG)"; echo "Created $(BLOSSOM_CONFIG)"; else echo "Using existing $(BLOSSOM_CONFIG)"; fi
+
+blossom-build: blossom-init ## Build the standalone Blossom server image.
+	$(BLOSSOM_COMPOSE) build
+
+blossom-start: blossom-init ## Start the standalone Blossom server and preserve its data.
+	$(BLOSSOM_COMPOSE) up -d
+
+blossom-stop: ## Stop the Blossom server without removing its data.
+	$(BLOSSOM_COMPOSE) stop
+
+blossom-restart: ## Restart the Blossom server.
+	$(BLOSSOM_COMPOSE) restart
+
+blossom-status: ## Show the Blossom server container status.
+	$(BLOSSOM_COMPOSE) ps -a
+
+blossom-logs: ## Show the latest Blossom server logs.
+	$(BLOSSOM_COMPOSE) logs --tail 100
+
+blossom-check: ## Check the Blossom server's HTTP landing page.
+	@curl --fail --silent --show-error --max-time 5 -o /dev/null "$(BLOSSOM_HTTP_URL)/" && echo "Blossom server responds at $(BLOSSOM_HTTP_URL)"
 
 clean: ## Remove generated build artifacts and local Go cache.
 	rm -rf $(BIN_DIR) $(CURDIR)/.cache frontend/node_modules frontend/dist

@@ -33,6 +33,8 @@ type trackingOptions struct {
 }
 type trackingState struct {
 	mu      sync.Mutex
+	namesMu sync.Mutex
+	videoMu sync.Mutex
 	jobID   string
 	preview []byte
 	frame   map[string]any
@@ -131,11 +133,12 @@ func (s *Server) trackingUpload(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) trackingStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Mode     string `json:"mode"`
-		Input    string `json:"input"`
-		Profile  string `json:"profile"`
-		Original bool   `json:"original"`
-		Mask     bool   `json:"mask"`
+		Mode      string `json:"mode"`
+		Input     string `json:"input"`
+		Profile   string `json:"profile"`
+		Original  bool   `json:"original"`
+		Mask      bool   `json:"mask"`
+		FullVideo bool   `json:"fullVideo"`
 		trackingOptions
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req) != nil {
@@ -186,6 +189,10 @@ func (s *Server) trackingStart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "live":
+		if req.FullVideo {
+			http.Error(w, "full video export requires a recorded video", 400)
+			return
+		}
 		u, err := url.Parse(input)
 		if err != nil || u.Scheme != "rtsp" || u.Hostname() == "" {
 			http.Error(w, "enter a valid RTSP URL", 400)
@@ -220,13 +227,13 @@ func (s *Server) trackingStart(w http.ResponseWriter, r *http.Request) {
 	s.tracking.preview = nil
 	s.tracking.frame = nil
 	job := s.jobs.Start("object-tracking", func(ctx context.Context, progress func(float64, string)) error {
-		return s.runTracking(ctx, worker, req.Mode, input, req.Profile, req.Original, req.Mask, req.trackingOptions, progress)
+		return s.runTracking(ctx, worker, req.Mode, input, req.Profile, req.Original, req.Mask, req.FullVideo, req.trackingOptions, progress)
 	})
 	s.tracking.jobID = job.ID
 	writeJSON(w, 202, job)
 }
-func (s *Server) runTracking(ctx context.Context, worker, mode, input, profile string, original, mask bool, options trackingOptions, progress func(float64, string)) error {
-	args := []string{"-input", input, "-mode", mode, "-profile", profile, "-original=" + strconv.FormatBool(original), "-mask=" + strconv.FormatBool(mask), "-output", s.trackingEventsRoot()}
+func (s *Server) runTracking(ctx context.Context, worker, mode, input, profile string, original, mask, fullVideo bool, options trackingOptions, progress func(float64, string)) error {
+	args := []string{"-input", input, "-mode", mode, "-profile", profile, "-original=" + strconv.FormatBool(original), "-mask=" + strconv.FormatBool(mask), "-full-video=" + strconv.FormatBool(fullVideo), "-output", s.trackingEventsRoot()}
 	for _, option := range []struct {
 		name  string
 		value *float64
@@ -282,6 +289,9 @@ func (s *Server) runTracking(ctx context.Context, worker, mode, input, profile s
 			p, _ := data["progress"].(float64)
 			message, _ := data["status"].(string)
 			progress(p, message)
+		}
+		if data["type"] == "export" {
+			progress(0.99, "Encoding full tracked video")
 		}
 	}
 	scanErr := scanner.Err()
@@ -398,15 +408,32 @@ func (s *Server) trackingEventFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	defer root.Close()
 	items := []string{}
+	priority := map[string]bool{}
+	for _, name := range []string{"event.json", "tracking.json", "tracked.mp4", "tracked.avi", "track_names.json"} {
+		f, err := root.Open(filepath.Join(relativeID, name))
+		if err != nil {
+			continue
+		}
+		info, err := f.Stat()
+		f.Close()
+		if err == nil && info.Mode().IsRegular() {
+			items = append(items, name)
+			priority[name] = true
+		}
+	}
 	err = fs.WalkDir(root.FS(), relativeID, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if !entry.IsDir() && entry.Type().IsRegular() {
+			name := strings.TrimPrefix(path, relativeID+"/")
+			if priority[name] {
+				return nil
+			}
 			switch strings.ToLower(filepath.Ext(path)) {
 			case ".json", ".jpg", ".png", ".gif", ".avi", ".mp4":
 				if len(items) < 5000 {
-					items = append(items, strings.TrimPrefix(path, relativeID+"/"))
+					items = append(items, name)
 				}
 			}
 		}
@@ -416,8 +443,55 @@ func (s *Server) trackingEventFiles(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	original, _, openErr := s.openTrackingOriginal(id)
+	if openErr == nil {
+		original.Close()
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "originalAvailable": openErr == nil})
+}
+
+var objectCropName = regexp.MustCompile(`^frame_[0-9]+_[0-9]+ms\.jpe?g$`)
+
+func (s *Server) trackingObjectCrops(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	track, err := strconv.Atoi(r.PathValue("track"))
+	if id == "" || id == "." || id == ".." || filepath.Base(id) != id || err != nil || track < 1 || track > 1000000000 {
+		http.NotFound(w, r)
+		return
+	}
+	rootPath, relativeID := s.trackingEventRoot(id)
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer root.Close()
+	dir := filepath.Join(relativeID, "track_crops", fmt.Sprintf("object_%04d", track))
+	f, err := root.Open(dir)
+	if os.IsNotExist(err) {
+		writeJSON(w, 200, map[string]any{"items": []string{}})
+		return
+	}
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	entries, err := f.ReadDir(-1)
+	if err != nil {
+		http.Error(w, "cannot list object crops", 500)
+		return
+	}
+	items := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Type().IsRegular() && objectCropName.MatchString(entry.Name()) {
+			items = append(items, filepath.ToSlash(filepath.Join("track_crops", fmt.Sprintf("object_%04d", track), entry.Name())))
+		}
+	}
+	sort.Strings(items)
 	writeJSON(w, 200, map[string]any{"items": items})
 }
+
 func (s *Server) trackingEventFile(w http.ResponseWriter, r *http.Request) {
 	id, name := r.PathValue("id"), r.PathValue("path")
 	if id == "" || id == "." || id == ".." || filepath.Base(id) != id || !filepath.IsLocal(name) {

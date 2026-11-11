@@ -1,0 +1,14 @@
+node_modules
+data
+.env
+build
+database.json
+config.yml
+dist
+.netrc
+public/client.js
+result
+.planning
+.claude
+vendor
+blossom-vm.qcow2

@@ -290,6 +290,38 @@ Nostr relay” to use the direct subscription instead. Direct SDR status remains
 separate from the relay connection status. A relay URL and key must be configured
 for the main app independently of the SDR publisher's `NOSTR_RELAY` setting.
 
+## Blossom server
+
+The Blossom server from the earlier tracking project can run on the machine
+that runs the main app. Docker and network access for the initial image build
+are required:
+
+```sh
+make blossom-start
+make blossom-status
+make blossom-check
+make blossom-logs
+make blossom-stop
+```
+
+The server listens at `http://127.0.0.1:3001` by default. Its first start copies
+the example settings to `data/blossom/config.yml`; edit that file and restart
+the server to change its settings. Uploads require authentication by default.
+The default retention rules remove images after a month without access and
+videos and other files after a week without access. Review the configuration
+before relying on it for long-term storage.
+
+The Compose project uses its own persistent Docker volume. Stopping the server
+does not remove its files, and this setup does not migrate or alter the old
+server's data. Use `BLOSSOM_BIND`, `BLOSSOM_PORT`, `BLOSSOM_PROJECT`, and
+`BLOSSOM_CONFIG` to override the bind address, host port, Compose project, and
+configuration path. Pass the same overrides to subsequent commands. The
+`blossom-check` command checks the landing page, which is enabled by default;
+`BLOSSOM_HTTP_URL` overrides the URL it checks. `make blossom-build` explicitly
+builds the image, and `make blossom-restart` restarts the container.
+
+Object tracking does not yet upload its output to Blossom.
+
 ## Object tracking
 
 The Object tracking view uses the motion detection and event recording pipeline
@@ -300,6 +332,8 @@ packages installed, run:
 make install-tracking  # Ubuntu packages; requires sudo
 make run-tracking      # Build the OpenCV worker and start the web app
 ```
+
+To install FFmpeg by itself on Ubuntu, run `make install-ffmpeg`.
 
 Alternatively, run `make build-tracking` once and start the web app with
 `make run`. The worker uses GoCV 0.39 and the distribution's OpenCV 4.10; set
@@ -316,8 +350,45 @@ or rolling-ball profile, optionally save the original and mask videos, and
 start tracking. Optional detection settings allow you to tune area, speed and
 foreground thresholds. The view shows an annotated preview, progress and event files;
 the stop button cancels the worker. Recorded events are stored in the configured
-`tracking.outputDir` beneath the data root by default. The browser may download
-AVI files rather than play them directly.
+`tracking.outputDir` beneath the data root by default.
+
+Open **Events** to browse recorded tracking events and their files. The same
+event list is also available in **Object tracking**, and refreshes while a
+session is running.
+
+Select an event, then choose an object under **Tracked objects** to play its
+saved close-ups and view its path. Use the playback slider to inspect a point
+along the path. Enter a name and choose **Save name**; names are stored per
+event in `track_names.json` and are compatible with the earlier tracker. Names
+for the bundled sample are stored separately beneath the app's data root.
+New full-video sessions also save tracking metadata and sampled close-ups;
+older sessions without those files cannot show object details.
+
+For an event with a tracked video and tracking metadata, selecting an object
+also highlights its box and the path travelled so far on the video.
+The overlay follows video playback and seeking; it marks a temporarily missed
+detection as the last seen position.
+
+When an original recording is available, choose **Original video — selected
+object only** in the video selector, then select an object. The original has no
+embedded tracking marks, so only that object's box and path appear. Full-video
+sessions use their uploaded source as the original. For individual event clips,
+select **Save original video** before starting tracking; old events without an
+original clip cannot offer this view. Original videos are converted to a cached
+browser-compatible MP4 on first viewing and require FFmpeg and disk space.
+
+Tracked videos play in the Events view, with a download link for the original
+file. Older AVI clips are converted to MP4 on first viewing with FFmpeg; this
+can take time and uses additional disk space in `tracking-playback` beneath the
+data root. The conversion is cached and the original AVI is preserved.
+
+For a recorded video, leave **Save full tracked video (MP4)** selected when
+starting tracking. When processing and encoding finish, select the `session-…`
+entry in **Events** to play the entire video with track boxes, trails, labels
+and speeds. This produces a video for each new session. Full export needs FFmpeg and
+extra disk space for a temporary AVI and the final MP4, and it takes additional
+encoding time. The video has no audio. Live streams still show annotated
+previews and record individual events, rather than a full-session MP4.
 
 `testdata/tracking/tele-sample.mp4` is a copied DWARF recording for trying the
 pipeline; it may not produce a recorded event using the default thresholds.

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,6 +99,71 @@ func TestTrackingEventFilesAreConfined(t *testing.T) {
 	}
 }
 
+func TestTrackingObjectNamesPersistAndStayInsideEvent(t *testing.T) {
+	s := newTestServer(t)
+	dir := filepath.Join(s.trackingEventsRoot(), "event-one")
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "event.json"), []byte(`{}`), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "track_names.json"), []byte(`{"2":"Existing"}`), 0640); err != nil {
+		t.Fatal(err)
+	}
+	cropDir := filepath.Join(dir, "track_crops", "object_0032")
+	if err := os.MkdirAll(cropDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cropDir, "frame_000010_000001000ms.jpg"), []byte("image"), 0640); err != nil {
+		t.Fatal(err)
+	}
+	cropRes := httptest.NewRecorder()
+	s.Handler().ServeHTTP(cropRes, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/event-one/objects/32/crops", nil))
+	if cropRes.Code != 200 || !strings.Contains(cropRes.Body.String(), "frame_000010_000001000ms.jpg") {
+		t.Fatalf("crop list: %d %s", cropRes.Code, cropRes.Body.String())
+	}
+	put := httptest.NewRecorder()
+	s.Handler().ServeHTTP(put, httptest.NewRequest(http.MethodPut, "/api/v1/tracking/events/event-one/names/32", strings.NewReader(`{"name":"Helicopter"}`)))
+	if put.Code != 200 {
+		t.Fatal(put.Code, put.Body.String())
+	}
+	get := httptest.NewRecorder()
+	s.Handler().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/event-one/names", nil))
+	var names map[string]string
+	if err := json.Unmarshal(get.Body.Bytes(), &names); err != nil || names["32"] != "Helicopter" || names["2"] != "Existing" {
+		t.Fatalf("names: %s (%v)", get.Body.String(), err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "track_names.json"))
+	if err != nil || !strings.Contains(string(data), "Helicopter") {
+		t.Fatalf("names not saved: %s %v", data, err)
+	}
+	invalid := httptest.NewRecorder()
+	s.Handler().ServeHTTP(invalid, httptest.NewRequest(http.MethodPut, "/api/v1/tracking/events/event-one/names/0", strings.NewReader(`{"name":"bad"}`)))
+	if invalid.Code != 400 {
+		t.Fatalf("invalid id: %d", invalid.Code)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte(`{"secret":"safe"}`), 0640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "track_names.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "track_names.json")); err != nil {
+		t.Fatal(err)
+	}
+	blocked := httptest.NewRecorder()
+	s.Handler().ServeHTTP(blocked, httptest.NewRequest(http.MethodPut, "/api/v1/tracking/events/event-one/names/1", strings.NewReader(`{"name":"bad"}`)))
+	if blocked.Code == 200 {
+		t.Fatal("followed names symlink outside event")
+	}
+	data, _ = os.ReadFile(outside)
+	if string(data) != `{"secret":"safe"}` {
+		t.Fatalf("outside file modified: %s", data)
+	}
+}
+
 func TestTrackingOpenCVIntegration(t *testing.T) {
 	worker := os.Getenv("TRACKFLIGHTS_INTEGRATION_WORKER")
 	if worker == "" {
@@ -167,5 +233,95 @@ func TestTrackingOpenCVIntegration(t *testing.T) {
 	}
 	if state := s.jobs.Get(job.ID).State; state != "cancelled" && state != "succeeded" {
 		t.Fatalf("worker did not stop: %s", state)
+	}
+}
+
+func TestTrackingFullVideoIntegration(t *testing.T) {
+	worker := os.Getenv("TRACKFLIGHTS_INTEGRATION_WORKER")
+	if worker == "" {
+		t.Skip("set TRACKFLIGHTS_INTEGRATION_WORKER to run the OpenCV integration test")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg is required")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe is required")
+	}
+	s := newTestServer(t)
+	t.Setenv("TRACKFLIGHTS_TRACKING_WORKER", worker)
+	if err := os.MkdirAll(s.trackingRoot(), 0750); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(s.trackingRoot(), "input.mp4")
+	cmd := exec.Command("ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=10", "-frames:v", "30", "-c:v", "mpeg4", input)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("create video: %v: %s", err, out)
+	}
+	res := httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/api/v1/tracking/start", strings.NewReader(`{"mode":"file","input":"input.mp4","profile":"general","fullVideo":true}`)))
+	if res.Code != 202 {
+		t.Fatal(res.Code, res.Body.String())
+	}
+	var job struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		state := s.jobs.Get(job.ID)
+		if state.State == "succeeded" {
+			break
+		}
+		if state.State == "failed" || state.State == "cancelled" {
+			t.Fatalf("tracking: %+v", state)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if state := s.jobs.Get(job.ID); state.State != "succeeded" {
+		s.jobs.Cancel(job.ID)
+		t.Fatalf("tracking did not finish: %+v", state)
+	}
+	res = httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events", nil))
+	var listing struct {
+		Items []struct {
+			ID string `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	id := ""
+	for _, item := range listing.Items {
+		if strings.HasPrefix(item.ID, "session-") {
+			id = item.ID
+		}
+	}
+	if id == "" {
+		t.Fatalf("missing session: %s", res.Body.String())
+	}
+	output := filepath.Join(s.trackingEventsRoot(), id, "tracked.mp4")
+	metadata, err := os.ReadFile(filepath.Join(s.trackingEventsRoot(), id, "tracking.json"))
+	if err != nil {
+		t.Fatalf("full session tracking metadata: %v", err)
+	}
+	var tracking struct {
+		Frames []json.RawMessage `json:"frames"`
+	}
+	if err := json.Unmarshal(metadata, &tracking); err != nil || len(tracking.Frames) != 30 {
+		t.Fatalf("full session tracking frames: %d, %v", len(tracking.Frames), err)
+	}
+	probe := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames", "-show_entries", "stream=codec_name,nb_read_frames", "-of", "csv=p=0", output)
+	if out, err := probe.CombinedOutput(); err != nil || strings.TrimSpace(string(out)) != "h264,30" {
+		t.Fatalf("unexpected video: %v: %s", err, out)
+	}
+	res = httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/tracking/events/"+id+"/files/tracked.mp4", nil)
+	request.Header.Set("Range", "bytes=0-31")
+	s.Handler().ServeHTTP(res, request)
+	if res.Code != http.StatusPartialContent || res.Body.Len() != 32 {
+		t.Fatalf("video range request: %d %d", res.Code, res.Body.Len())
 	}
 }

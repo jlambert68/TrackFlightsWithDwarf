@@ -22,3 +22,15 @@
 .tracking-tuning > div { display: flex; flex-wrap: wrap; gap: .8rem; margin: .8rem 0; }
 .tracking-tuning label { display: grid; gap: .3rem; font-size: .82rem; }
 .tracking-tuning input { width: 11rem; color: #e9f4ff; background: #10243a; border: 1px solid #31526e; border-radius: .35rem; padding: .5rem; }
+
+.tracked-video-player { position: relative; width: min(100%, 960px); line-height: 0; background: #030914; }
+.tracked-video-player video { display: block; width: 100%; height: auto; }
+.tracked-video-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.tracked-objects { margin: 1rem 0; }
+.tracked-objects select, .tracked-objects input { color: #e9f4ff; background: #10243a; border: 1px solid #31526e; padding: .45rem; }
+.object-name, .object-playback { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin: .7rem 0; }
+.object-review { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.object-closeup, .object-path { display: block; width: 100%; max-width: 400px; height: 260px; object-fit: contain; background: #030914; }
+.object-closeup { image-rendering: pixelated; }
+.object-path { border: 1px solid #25415d; }
+.object-playback input { flex: 1; min-width: 120px; }

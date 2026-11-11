@@ -547,6 +547,9 @@ func (r *EventRecorder) saveTrackCrops(frame gocv.Mat, meta FrameMetadata) error
 	frameBounds := image.Rect(0, 0, frame.Cols(), frame.Rows())
 
 	for _, track := range meta.Tracks {
+		if track.Missed > 0 {
+			continue
+		}
 		rect := image.Rect(
 			track.BoxX,
 			track.BoxY,

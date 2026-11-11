@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test": "node --test ../scripts/video-overlay-test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

@@ -1,27 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { TrackingEvents } from './TrackingEvents'
 import './objectTracking.css'
 
 type Job = { id?: string; state?: string; progress?: number; message?: string; error?: string }
 type Status = { workerAvailable: boolean; job: Job; hasPreview: boolean; frame?: { frame?: number; detections?: number; tracks?: number; recording?: boolean; fixedLength?: boolean } }
 type Input = {id: string; name: string}
-type TrackingEvent = {id: string; summary: unknown}
 
 export function ObjectTracking() {
   const [status, setStatus] = useState<Status | null>(null)
   const [inputs, setInputs] = useState<Input[]>([])
-  const [events, setEvents] = useState<TrackingEvent[]>([])
   const [input, setInput] = useState('sample')
   const [mode, setMode] = useState<'file' | 'live'>('file')
   const [url, setURL] = useState('rtsp://192.168.88.1/ch0/stream0')
   const [profile, setProfile] = useState('general')
-  const [original, setOriginal] = useState(false), [mask, setMask] = useState(false)
+  const [original, setOriginal] = useState(false), [mask, setMask] = useState(false), [fullVideo, setFullVideo] = useState(true)
   const [minArea, setMinArea] = useState(''), [slowSpeed, setSlowSpeed] = useState(''), [fastSpeed, setFastSpeed] = useState(''), [threshold, setThreshold] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [selected, setSelected] = useState<TrackingEvent | null>(null)
-  const [files, setFiles] = useState<string[]>([])
   const [previewVersion, setPreviewVersion] = useState(0)
-  const previousState = useRef('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -39,12 +35,6 @@ export function ObjectTracking() {
     setInputs(data.items)
     setInput(current => data.items.some(item => item.id === current) ? current : data.items[0]?.id ?? '')
   }, [])
-  const refreshEvents = useCallback(async () => {
-    const response = await fetch('/api/v1/tracking/events')
-    if (!response.ok) throw new Error('Could not list recorded events')
-    const data: {items: TrackingEvent[]} = await response.json()
-    setEvents(data.items)
-  }, [])
   useEffect(() => {
     let alive = true
     const refresh = async () => {
@@ -55,30 +45,14 @@ export function ObjectTracking() {
         if (!alive) return
         setStatus(next)
         if (next.hasPreview) setPreviewVersion(v => v + 1)
-        if ((previousState.current === 'running' || previousState.current === 'queued') && next.job.state !== 'running' && next.job.state !== 'queued') void refreshEvents().catch(() => {})
-        previousState.current = next.job.state ?? ''
       } catch { if (alive) setError('Tracking service unavailable') }
     }
     void refresh()
     void refreshInputs().catch(e => { if (alive) setError(e.message) })
-    void refreshEvents().catch(e => { if (alive) setError(e.message) })
     const timer = window.setInterval(() => void refresh(), 1000)
     return () => { alive = false; clearInterval(timer) }
-  }, [refreshEvents, refreshInputs])
-  useEffect(() => {
-    if (!selected) { setFiles([]); return }
-    const controller = new AbortController()
-    fetch(`/api/v1/tracking/events/${encodeURIComponent(selected.id)}/files`, {signal: controller.signal})
-      .then(r => r.ok ? r.json() : Promise.reject()).then((data: {items: string[]}) => setFiles(data.items))
-      .catch(() => { if (!controller.signal.aborted) setError('Could not load event files') })
-    return () => controller.abort()
-  }, [selected])
+  }, [refreshInputs])
   const active = status?.job.state === 'running' || status?.job.state === 'queued'
-  useEffect(() => {
-    if (!active) return
-    const timer = window.setInterval(() => void refreshEvents().catch(() => {}), 5000)
-    return () => window.clearInterval(timer)
-  }, [active, refreshEvents])
   const request = async (path: string, options: RequestInit) => {
     setBusy(true); setError('')
     try {
@@ -88,8 +62,8 @@ export function ObjectTracking() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Request failed'); return null } finally { setBusy(false) }
   }
   const start = async () => {
-    const response = await request('/api/v1/tracking/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode, input: mode === 'file' ? input : url, profile, original, mask, ...(minArea !== '' && {minArea: Number(minArea)}), ...(slowSpeed !== '' && {slowSpeed: Number(slowSpeed)}), ...(fastSpeed !== '' && {fastSpeed: Number(fastSpeed)}), ...(threshold !== '' && {threshold: Number(threshold)})})})
-    if (response) { const job: Job = await response.json(); previousState.current = job.state ?? 'queued'; setStatus(current => current ? {...current, job, hasPreview: false, frame: undefined} : current) }
+    const response = await request('/api/v1/tracking/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode, input: mode === 'file' ? input : url, profile, original, mask, fullVideo: mode === 'file' && fullVideo, ...(minArea !== '' && {minArea: Number(minArea)}), ...(slowSpeed !== '' && {slowSpeed: Number(slowSpeed)}), ...(fastSpeed !== '' && {fastSpeed: Number(fastSpeed)}), ...(threshold !== '' && {threshold: Number(threshold)})})})
+    if (response) { const job: Job = await response.json(); setStatus(current => current ? {...current, job, hasPreview: false, frame: undefined} : current) }
   }
   const upload = async (file?: File) => {
     if (!file) return
@@ -97,23 +71,19 @@ export function ObjectTracking() {
     const response = await request('/api/v1/tracking/inputs', {method: 'POST', body})
     if (response) { const result: Input = await response.json(); await refreshInputs(); setInput(result.id); setMode('file') }
   }
-  const fileURL = (path: string) => `/api/v1/tracking/events/${encodeURIComponent(selected?.id ?? '')}/files/${path.split('/').map(encodeURIComponent).join('/')}`
-  const crop = files.find(file => /\.(jpg|png)$/i.test(file))
   return <section className="tracking-workspace">
     <div className="tracking-controls">
       <label>Source<select value={mode} disabled={active} onChange={e => setMode(e.target.value as 'file' | 'live')}><option value="file">Recorded video</option><option value="live">Live RTSP stream</option></select></label>
       {mode === 'file' ? <><label>Video<select value={input} disabled={active || inputs.length === 0} onChange={e => setInput(e.target.value)}>{inputs.length === 0 && <option value="">No videos available</option>}{inputs.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Upload video<input type="file" accept=".mp4,.avi,.mov,.mkv" disabled={active || busy} onChange={e => { void upload(e.target.files?.[0]); e.target.value = '' }}/></label></> : <label>RTSP URL<input value={url} disabled={active} onChange={e => setURL(e.target.value)} /></label>}
       <label>Tracking profile<select value={profile} disabled={active} onChange={e => setProfile(e.target.value)}><option value="general">General / aircraft</option><option value="rolling_ball">Rolling or thrown ball</option></select></label>
-      <label className="tracking-checkbox"><input type="checkbox" checked={original} disabled={active} onChange={e => setOriginal(e.target.checked)}/> Save original video</label><label className="tracking-checkbox"><input type="checkbox" checked={mask} disabled={active} onChange={e => setMask(e.target.checked)}/> Save motion mask</label>
+      {mode === 'file' && <label className="tracking-checkbox"><input type="checkbox" checked={fullVideo} disabled={active} onChange={e => setFullVideo(e.target.checked)}/> Save full tracked video (MP4)</label>}<label className="tracking-checkbox"><input type="checkbox" checked={original} disabled={active} onChange={e => setOriginal(e.target.checked)}/> Save original video</label><label className="tracking-checkbox"><input type="checkbox" checked={mask} disabled={active} onChange={e => setMask(e.target.checked)}/> Save motion mask</label>
       {!active ? <button onClick={() => void start()} disabled={busy || !status?.workerAvailable || (mode === 'file' ? !input : !url)}>Start tracking</button> : <button onClick={() => void request(`/api/v1/jobs/${encodeURIComponent(status?.job.id ?? '')}/cancel`, {method: 'POST'})} disabled={busy}>Stop tracking</button>}
     </div>
     <details className="tracking-tuning"><summary>Detection settings</summary><div><label>Minimum area (px²)<input type="number" min="0" step="any" placeholder="Profile default" value={minArea} disabled={active} onChange={e => setMinArea(e.target.value)}/></label><label>Slow speed (px/s)<input type="number" min="0" step="any" placeholder="Profile default" value={slowSpeed} disabled={active} onChange={e => setSlowSpeed(e.target.value)}/></label><label>Fast speed (px/s)<input type="number" min="0" step="any" placeholder="Profile default" value={fastSpeed} disabled={active} onChange={e => setFastSpeed(e.target.value)}/></label><label>Foreground threshold (0–255)<input type="number" min="0" max="255" step="any" placeholder="Profile default" value={threshold} disabled={active} onChange={e => setThreshold(e.target.value)}/></label></div><small>Leave a field empty to use the selected profile’s default.</small></details>
     {status && !status.workerAvailable && <p className="error">Tracking worker unavailable. Install the OpenCV prerequisites and run <code>make build-tracking</code>.</p>}
     {error && <p className="error" role="alert">{error}</p>}
     {status?.job.error && <p className="error" role="alert">{status.job.error}</p>}
-    <div className="tracking-layout"><div className="tracking-preview">{status?.hasPreview ? <img src={`/api/v1/tracking/preview?v=${previewVersion}`} alt="Live object tracking preview" /> : <p className="muted">Choose a video or live stream to begin tracking.</p>}</div><aside className="tracking-info"><h2>Tracking</h2><p>{status?.job.state || 'Idle'}</p>{status?.frame?.fixedLength && <progress max={1} value={status.job.progress ?? 0} />}<p>{status?.job.message || 'Waiting for a tracking session'}</p><p>Frame {status?.frame?.frame ?? '—'} · {status?.frame?.detections ?? 0} detections · {status?.frame?.tracks ?? 0} tracks</p>{active && status?.frame?.recording && <strong>Recording event</strong>}<button onClick={() => void refreshEvents().catch(e => setError(e.message))}>Refresh events</button></aside></div>
-    <div className="tracking-results"><h2>Recorded events</h2>{events.length === 0 ? <p className="muted">No recorded events yet.</p> : <div className="tracking-event-list">{events.map(event => <button key={event.id} className={selected?.id === event.id ? 'selected' : ''} onClick={() => setSelected(event)}>{event.id}</button>)}</div>}
-      {selected && <section><h3>{selected.id}</h3>{crop && <img className="tracking-crop" src={fileURL(crop)} alt="Tracked object crop"/>}<details><summary>Event details</summary><pre>{JSON.stringify(selected.summary, null, 2)}</pre></details><h4>Files</h4><ul>{files.slice(0, 100).map(file => <li key={file}><a href={fileURL(file)} target="_blank" rel="noreferrer">{file}</a></li>)}</ul>{files.length > 100 && <p className="muted">Showing the first 100 files.</p>}</section>}
-    </div>
+    <div className="tracking-layout"><div className="tracking-preview">{status?.hasPreview ? <img src={`/api/v1/tracking/preview?v=${previewVersion}`} alt="Live object tracking preview" /> : <p className="muted">Choose a video or live stream to begin tracking.</p>}</div><aside className="tracking-info"><h2>Tracking</h2><p>{status?.job.state || 'Idle'}</p>{status?.frame?.fixedLength && <progress max={1} value={status.job.progress ?? 0} />}<p>{status?.job.message || 'Waiting for a tracking session'}</p><p>Frame {status?.frame?.frame ?? '—'} · {status?.frame?.detections ?? 0} detections · {status?.frame?.tracks ?? 0} tracks</p>{active && status?.frame?.recording && <strong>Recording event</strong>}</aside></div>
+    <TrackingEvents/>
   </section>
 }
