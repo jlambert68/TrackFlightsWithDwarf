@@ -15,6 +15,29 @@ export function selectedTrackAtTime(frames, selected, seconds) {
   return frameAtTime(frames, seconds)?.tracks?.find(track => track.id === selected)
 }
 
+// Selecting an object outside its visible interval should reveal it in all views.
+export function selectionSeekTime(frames, selected, seconds) {
+  if (selected == null) return undefined
+  const current = selectedTrackAtTime(frames, selected, seconds)
+  if (current && !current.missed_frames) return undefined
+  const first = frames.find(frame => frame.tracks?.some(track => track.id === selected && !track.missed_frames))
+  return first ? first.time_ms / 1000 : undefined
+}
+
+// Crops can be sampled less often than tracking frames. Avoid showing a stale
+// image when there is a long gap in the saved crops.
+export function nearestCrop(crops, frame, maxDistance) {
+  let low = 0, high = crops.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (crops[middle].frame < frame) low = middle + 1
+    else high = middle
+  }
+  const before = crops[low - 1], after = crops[low]
+  const closest = !before ? after : !after || frame - before.frame <= after.frame - frame ? before : after
+  return closest && Math.abs(closest.frame - frame) <= maxDistance ? closest : undefined
+}
+
 // Expand tiny boxes for display while retaining the detected center.
 export function visibleTrackBox(track, width, height, scale = 4) {
   const boxWidth = Math.min(width, Math.max(track.box_width * scale, width * scale * 0.01))

@@ -384,15 +384,23 @@ are required for auto-start. Use `make nostr-pull-analysis` to download the
 image in advance. The app verifies that the relay responds before publishing.
 The Nostr tab displays messages of all kinds from either configured relay,
 showing up to 100 stored messages on connection and new messages as they arrive.
-It also offers tracking publication settings: enable/disable publishing, relay
+Its relay settings configure the ADS-B relay used by the main app and the
+tracking-analysis relay separately; the status indicator applies to the relay
+selected for the message display. Configure the SDR app separately to publish
+to the ADS-B relay. The tab also offers tracking publication settings: enable/disable publishing, relay
 URL, local auto-start and signing-key file. The key defaults to
 `data/tracking/nostr.key` and is created with owner-only permissions. Relay
 messages are signed but not encrypted, so everyone with access to the relay can
 read the published analysis.
 
 Select an event, then choose an object under **Tracked objects** to play its
-saved close-ups and view its path. Use the playback slider to inspect a point
-along the path. Enter a name and choose **Save name**; names are stored per
+saved close-ups and view its path. When video is available, the close-up and
+path marker follow the same timeline as both videos, and either set of playback
+controls can play, pause, or seek all views. Close-ups are sampled, so the
+nearest saved frame is shown; gaps without a nearby image are left empty.
+Selecting an object that is not visible at the current time moves playback to
+its first detected position.
+Events without video retain standalone object playback. Enter a name and choose **Save name**; names are stored per
 event in `track_names.json` and are compatible with the earlier tracker. Names
 for the bundled sample are stored separately beneath the app's data root.
 New full-video sessions also save tracking metadata and sampled close-ups;

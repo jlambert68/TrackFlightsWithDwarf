@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {frameAtTime, pathAtTime, selectedTrackAtTime, visibleTrackBox} from '../frontend/src/components/videoOverlay.mjs'
+import {frameAtTime, nearestCrop, pathAtTime, selectedTrackAtTime, selectionSeekTime, visibleTrackBox} from '../frontend/src/components/videoOverlay.mjs'
 
 const frames = [
   {time_ms: 0, tracks: []},
@@ -9,6 +9,32 @@ const frames = [
   {time_ms: 300, tracks: [{id: 1, x: 30, y: 40}]},
 ]
 const points = [{time: 100, x: 10, y: 20}, {time: 300, x: 30, y: 40}]
+
+test('finds the nearest saved crop without displaying stale images', () => {
+  const crops = [{frame: 10}, {frame: 20}, {frame: 40}]
+  assert.equal(nearestCrop(crops, 10, 5), crops[0])
+  assert.equal(nearestCrop(crops, 16, 5), crops[1])
+  assert.equal(nearestCrop(crops, 15, 5), crops[0])
+  assert.equal(nearestCrop(crops, 34, 5), undefined)
+  assert.equal(nearestCrop(crops, 0, 5), undefined)
+  assert.equal(nearestCrop(crops, 45, 5), crops[2])
+  assert.equal(nearestCrop([], 10, 5), undefined)
+})
+
+test('reveals a newly selected object when it is outside its visible interval', () => {
+  const records = [
+    {time_ms: 0, tracks: []},
+    {time_ms: 266, tracks: [{id: 46}]},
+    {time_ms: 300, tracks: [{id: 46, missed_frames: 1}]},
+    {time_ms: 400, tracks: []},
+  ]
+  assert.equal(selectionSeekTime(records, 46, 0), 0.266)
+  assert.equal(selectionSeekTime(records, 46, 0.266), undefined)
+  assert.equal(selectionSeekTime(records, 46, 0.3), 0.266)
+  assert.equal(selectionSeekTime(records, 46, 0.4), 0.266)
+  assert.equal(selectionSeekTime(records, 99, 0), undefined)
+  assert.equal(selectionSeekTime(records, null, 0), undefined)
+})
 
 test('selects the current recorded frame when playing or seeking', () => {
   assert.equal(frameAtTime(frames, -0.1), undefined)

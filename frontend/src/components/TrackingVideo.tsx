@@ -1,19 +1,21 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { selectedTrackAtTime, visibleTrackBox, pathAtTime } from './videoOverlay.mjs'
 import type { VideoFrame } from './videoOverlay.mjs'
 import { createSynchronizedPlayback } from './synchronizedPlayback.mjs'
 import type { SynchronizedPlayback } from './synchronizedPlayback.mjs'
 
-type Props = {trackedURL?: string; originalURL?: string; trackedNeedsConversion: boolean; frames: VideoFrame[]; selected: number | null; name: string; sourceWidth: number; sourceHeight: number; objectOptions: {id: number; name: string}[]; onSelectObject: (id: number | null) => void}
+type Props = {trackedURL?: string; originalURL?: string; trackedNeedsConversion: boolean; frames: VideoFrame[]; selected: number | null; name: string; sourceWidth: number; sourceHeight: number; objectOptions: {id: number; name: string}[]; onSelectObject: (id: number | null) => void; onTimeChange: (time: number) => void; onPlayingChange: (playing: boolean) => void; onDurationChange: (duration: number) => void; onReadyChange: (ready: boolean) => void}
+export type TrackingVideoHandle = {play: () => void; pause: () => void; seek: (time: number) => void}
 type OverlaySettings = {overlayBoxScale: number; overlayBoxThickness: number; overlayPathThickness: number}
 type AppSettings = {tracking: Partial<OverlaySettings> & Record<string, unknown>; [key: string]: unknown}
 const overlayDefaults: OverlaySettings = {overlayBoxScale: 4, overlayBoxThickness: 1.5, overlayPathThickness: 1}
 const draftFrom = (settings: OverlaySettings) => ({overlayBoxScale: String(settings.overlayBoxScale), overlayBoxThickness: String(settings.overlayBoxThickness), overlayPathThickness: String(settings.overlayPathThickness)})
 
-export function TrackingVideo({trackedURL, originalURL, trackedNeedsConversion, frames, selected, name, sourceWidth, sourceHeight, objectOptions, onSelectObject}: Props) {
+export const TrackingVideo = forwardRef<TrackingVideoHandle, Props>(function TrackingVideo({trackedURL, originalURL, trackedNeedsConversion, frames, selected, name, sourceWidth, sourceHeight, objectOptions, onSelectObject, onTimeChange, onPlayingChange, onDurationChange, onReadyChange}, ref) {
   const tracked = useRef<HTMLVideoElement>(null)
   const original = useRef<HTMLVideoElement>(null)
   const controller = useRef<SynchronizedPlayback | null>(null)
+  useImperativeHandle(ref, () => ({play: () => controller.current?.play(), pause: () => controller.current?.pause(), seek: time => controller.current?.seek(time)}), [])
   const [time, setTime] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [buffering, setBuffering] = useState(false)
@@ -61,11 +63,11 @@ export function TrackingVideo({trackedURL, originalURL, trackedNeedsConversion, 
 
   useEffect(() => {
     const videos = [trackedURL && !trackedInfo.failed ? tracked.current : null, originalURL && !originalInfo.failed ? original.current : null].filter((video): video is HTMLVideoElement => video !== null)
-    setPlaying(false); setBuffering(false)
+    setPlaying(false); setBuffering(false); onPlayingChange(false)
     if (!videos.length) return
     const player = createSynchronizedPlayback(videos, {
-      onState: state => { setPlaying(state.wanted); setBuffering(state.buffering) },
-      onTime: setTime,
+      onState: state => { setPlaying(state.wanted); setBuffering(state.buffering); onPlayingChange(state.wanted) },
+      onTime: time => { setTime(time); onTimeChange(time) },
       onError: () => setError('Playback could not start. Please try again.'),
     })
     controller.current = player
@@ -73,7 +75,7 @@ export function TrackingVideo({trackedURL, originalURL, trackedNeedsConversion, 
     const update = () => { player.update(); request = requestAnimationFrame(update) }
     request = requestAnimationFrame(update)
     return () => { cancelAnimationFrame(request); player.dispose(); if (controller.current === player) controller.current = null }
-  }, [trackedURL, originalURL, trackedInfo.failed, originalInfo.failed])
+  }, [trackedURL, originalURL, trackedInfo.failed, originalInfo.failed, onPlayingChange, onTimeChange])
 
   const points = useMemo(() => {
     if (selected === null) return []
@@ -86,11 +88,15 @@ export function TrackingVideo({trackedURL, originalURL, trackedNeedsConversion, 
   const path = pathAtTime(points, time)
   const width = dimensions.width || sourceWidth, height = dimensions.height || sourceHeight
   const box = track && width > 0 && height > 0 ? visibleTrackBox(track, width, height, overlaySettings.overlayBoxScale) : null
+  const labelSize = Math.max(width, height) / 45
+  const labelGap = Math.max(width, height) / 100
+  const labelY = box ? (box.y >= labelSize + labelGap ? box.y - labelGap : Math.min(height - labelGap, box.y + box.height + labelSize + labelGap)) : 0
   const label = name ? `${name} (#${selected})` : `#${selected}`
   const available = [trackedURL && !trackedInfo.failed ? trackedInfo : null, originalURL && !originalInfo.failed ? originalInfo : null].filter((info): info is typeof trackedInfo => info !== null)
   const ready = available.length > 0 && available.every(info => info.loaded)
   const durations = available.map(info => info.duration).filter(duration => Number.isFinite(duration) && duration > 0)
   const duration = durations.length ? Math.min(...durations) : 0
+  useEffect(() => { onDurationChange(duration); onReadyChange(ready) }, [duration, ready, onDurationChange, onReadyChange])
   const mismatch = durations.length === 2 && Math.abs(durations[0] - durations[1]) > 0.15
   const formatTime = (seconds: number) => { const n = Math.max(0, Math.floor(seconds)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}` }
   return <section className="video-comparison" aria-label="Tracked and original videos">
@@ -110,7 +116,7 @@ export function TrackingVideo({trackedURL, originalURL, trackedNeedsConversion, 
       <div><h3>Original video</h3>{originalURL ? <><div className="tracked-video-player"><video ref={original} muted playsInline preload="auto" src={originalURL} onLoadedMetadata={e => { setOriginalInfo({loaded: true, failed: false, duration: e.currentTarget.duration}); setDimensions({width: e.currentTarget.videoWidth, height: e.currentTarget.videoHeight}) }} onError={() => setOriginalInfo({loaded: false, failed: true, duration: 0})}>Your browser cannot play this video.</video>{showOverlay && selected !== null && width > 0 && height > 0 && <svg className="tracked-video-overlay" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
         {box && <defs><mask id={maskID} maskUnits="userSpaceOnUse" x="0" y="0" width={width} height={height}><rect x="0" y="0" width={width} height={height} fill="white"/><rect x={box.x} y={box.y} width={box.width} height={box.height} fill="black"/></mask></defs>}
         {path && <polyline points={path} fill="none" stroke="#ffe358" strokeWidth={overlaySettings.overlayPathThickness} vectorEffect="non-scaling-stroke" mask={box ? `url(#${maskID})` : undefined}/>}
-        {track && box && <><rect x={box.x} y={box.y} width={box.width} height={box.height} fill="none" stroke="#ff5858" strokeWidth={overlaySettings.overlayBoxThickness} vectorEffect="non-scaling-stroke"/><text x={Math.max(0, Math.min(track.x+width/150, width-width/5))} y={Math.max(height/30, track.y-height/100)} fontSize={Math.max(width, height)/45} fill="#fff" stroke="#000" strokeWidth={Math.max(width, height)/400} paintOrder="stroke">{label}{track.missed_frames ? ' (last seen)' : ''}</text></>}
+        {track && box && <><rect x={box.x} y={box.y} width={box.width} height={box.height} fill="none" stroke="#ff5858" strokeWidth={overlaySettings.overlayBoxThickness} vectorEffect="non-scaling-stroke"/><text x={Math.max(0, Math.min(box.x, width-width/5))} y={labelY} fontSize={labelSize} fill="#fff" stroke="#000" strokeWidth={Math.max(width, height)/400} paintOrder="stroke">{label}{track.missed_frames ? ' (last seen)' : ''}</text></>}
       </svg>}</div>{originalInfo.failed ? <p className="error" role="alert">The original video could not be played. Conversion requires FFmpeg on the server.</p> : !originalInfo.loaded ? <p className="muted" role="status">Preparing original video for playback…</p> : showOverlay && selected === null ? <p className="muted">Select an object above to see its overlay.</p> : showOverlay && !track ? <p className="muted">The selected object has no recorded position at this point in the video.</p> : null}</> : <p className="muted">No original video was saved or could be matched to this event. New tracking sessions save an original event video by default.</p>}</div>
     </div>
     <div className="video-comparison-controls">
@@ -124,4 +130,4 @@ export function TrackingVideo({trackedURL, originalURL, trackedNeedsConversion, 
     {mismatch && <p className="muted">The recordings have different lengths; playback stops at the end of the shorter video.</p>}
     {error && <p className="error" role="alert">{error}</p>}
   </section>
-}
+})

@@ -46,7 +46,14 @@
 .object-closeup { image-rendering: pixelated; }
 .object-path { border: 1px solid #25415d; }
 .object-playback input { flex: 1; min-width: 120px; }
-.nostr-settings { display: grid; gap: .6rem; max-width: 48rem; margin: 1rem 0; }
+.nostr-settings { display: grid; gap: .6rem; max-width: 48rem; margin: 1rem 0; padding: .9rem; border: 1px solid #31526e; border-radius: .4rem; }
+.nostr-settings h4 { margin: 1rem 0 .2rem; }
+.nostr-relay-status { display: flex; align-items: flex-start; gap: .8rem; max-width: 48rem; margin: 1rem 0; padding: .85rem 1rem; border: 1px solid; border-radius: .5rem; overflow-wrap: anywhere; }
+.nostr-relay-status.connected { color: #b5f5d0; background: #103927; border-color: #3b9b68; }
+.nostr-relay-status.connecting { color: #ffe2a1; background: #423314; border-color: #b78b38; }
+.nostr-relay-status.disconnected { color: #ffd1ce; background: #481f26; border-color: #c26368; }
+.nostr-status-indicator { flex: none; width: .8rem; height: .8rem; margin-top: .25rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px #ffffff20; }
+.nostr-relay-address { margin-top: .2rem; font-size: .9em; }
 .blossom-button { display: inline-block; padding: .55rem .8rem; margin: 0 .8rem .8rem 0; border: 1px solid #31526e; border-radius: .35rem; background: #15324a; color: #e9f4ff !important; text-decoration: none; }
 .nostr-settings label { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .nostr-settings input:not([type=checkbox]) { flex: 1; min-width: 15rem; }
